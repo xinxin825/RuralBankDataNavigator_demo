@@ -2,1072 +2,1168 @@
 
 import { useMemo, useState } from "react";
 
-type View =
-  | "ask"
-  | "dashboard"
-  | "metrics"
-  | "history"
-  | "admin-metrics"
+type Surface = "workspace" | "admin" | "personal";
+type UserKey = "super-admin" | "branch-manager" | "risk-officer" | "customer-manager";
+type AdminView =
+  | "admin-home"
+  | "admin-connections"
   | "admin-semantic"
+  | "admin-metrics"
+  | "admin-terms"
+  | "admin-sql"
   | "admin-models"
+  | "admin-prompts"
+  | "admin-orgs"
   | "admin-permissions"
+  | "admin-approvals"
+  | "admin-masking"
+  | "admin-audit"
   | "admin-evaluation"
-  | "admin-audit";
+  | "admin-feedback";
+type PersonalView = "model-settings" | "my-permissions";
+type RequestStatus = "待审批" | "已通过" | "已拒绝";
 
-type ResultKind = "operations" | "risk" | "marketing";
-
-type Metric = {
-  id: string;
+type DemoUser = {
+  key: UserKey;
   name: string;
-  domain: string;
-  owner: string;
-  status: "已发布" | "审核中" | "草稿";
-  coverage: string;
-  definition: string;
+  initials: string;
+  role: string;
+  department: string;
+  scope: string;
+  canManage: boolean;
+  permissionLevel: string;
 };
 
-const businessNavigation: { id: View; label: string; icon: string }[] = [
-  { id: "ask", label: "智能问数", icon: "问" },
-  { id: "dashboard", label: "分析看板", icon: "析" },
-  { id: "metrics", label: "指标中心", icon: "标" },
-  { id: "history", label: "历史查询", icon: "史" },
-];
+type PermissionRequest = {
+  id: string;
+  applicant: string;
+  department: string;
+  role: string;
+  permission: string;
+  scope: string;
+  reason: string;
+  submittedAt: string;
+  status: RequestStatus;
+};
 
-const adminNavigation: { id: View; label: string; icon: string }[] = [
-  { id: "admin-metrics", label: "指标治理", icon: "治" },
-  { id: "admin-semantic", label: "语义知识", icon: "义" },
-  { id: "admin-models", label: "数据模型", icon: "模" },
-  { id: "admin-permissions", label: "权限安全", icon: "权" },
-  { id: "admin-evaluation", label: "评测中心", icon: "测" },
-  { id: "admin-audit", label: "审计监控", icon: "审" },
-];
-
-const queryExamples = [
-  {
-    eyebrow: "经营分析",
-    query: "今年上半年各农商行普惠小微贷款余额、同比增速和全省排名是多少？",
+const USERS: Record<UserKey, DemoUser> = {
+  "super-admin": {
+    key: "super-admin",
+    name: "周主管",
+    initials: "周",
+    role: "数据治理管理员",
+    department: "数据资产部",
+    scope: "全省机构",
+    canManage: true,
+    permissionLevel: "L4 · 全局管理",
   },
-  {
-    eyebrow: "风险管控",
-    query: "近30天新增逾期贷款主要集中在哪些机构和产品？",
+  "branch-manager": {
+    key: "branch-manager",
+    name: "李经理",
+    initials: "李",
+    role: "分支行负责人",
+    department: "南京农商行",
+    scope: "本机构及下辖网点",
+    canManage: false,
+    permissionLevel: "L3 · 机构管理",
   },
-  {
-    eyebrow: "客户营销",
-    query: "筛选近半年存款下降但资产规模较高的客户群体",
+  "risk-officer": {
+    key: "risk-officer",
+    name: "王专员",
+    initials: "王",
+    role: "风险专员",
+    department: "风险管理部",
+    scope: "授权风险数据集",
+    canManage: false,
+    permissionLevel: "L2 · 专业查询",
   },
-];
-
-const resultCopy: Record<
-  ResultKind,
-  {
-    title: string;
-    summary: string;
-    metric: string;
-    value: string;
-    change: string;
-    secondary: string;
-    secondaryValue: string;
-    chartTitle: string;
-    chartUnit: string;
-    bars: { name: string; value: number; display: string; tone?: "warn" }[];
-  }
-> = {
-  operations: {
-    title: "普惠小微贷款保持稳健增长，苏州、无锡、常州位列前三",
-    summary:
-      "截至2026年6月末，全省普惠型小微企业贷款余额4,286.3亿元，同比增长12.8%。有3家机构增速低于全省平均水平，建议重点关注盐城、淮安和宿迁。",
-    metric: "普惠小微贷款余额",
-    value: "4,286.3亿元",
-    change: "同比 +12.8%",
-    secondary: "户均贷款",
-    secondaryValue: "87.6万元",
-    chartTitle: "机构贷款余额与同比增速",
-    chartUnit: "余额（亿元）",
-    bars: [
-      { name: "苏州", value: 96, display: "682.4" },
-      { name: "无锡", value: 82, display: "578.9" },
-      { name: "常州", value: 68, display: "481.6" },
-      { name: "南通", value: 59, display: "416.8" },
-      { name: "盐城", value: 47, display: "331.2", tone: "warn" },
-      { name: "淮安", value: 39, display: "275.5", tone: "warn" },
-    ],
-  },
-  risk: {
-    title: "新增逾期主要集中在制造业与批发零售业",
-    summary:
-      "近30天新增逾期贷款8.64亿元，较前30天上升6.2%。盐城、徐州和淮安合计占新增逾期的42.7%，其中制造业贡献最高。",
-    metric: "新增逾期贷款",
-    value: "8.64亿元",
-    change: "环比 +6.2%",
-    secondary: "涉及客户",
-    secondaryValue: "1,284户",
-    chartTitle: "机构新增逾期分布",
-    chartUnit: "金额（亿元）",
-    bars: [
-      { name: "盐城", value: 92, display: "1.82", tone: "warn" },
-      { name: "徐州", value: 76, display: "1.51", tone: "warn" },
-      { name: "淮安", value: 58, display: "1.16", tone: "warn" },
-      { name: "苏州", value: 44, display: "0.88" },
-      { name: "南通", value: 37, display: "0.73" },
-      { name: "泰州", value: 29, display: "0.57" },
-    ],
-  },
-  marketing: {
-    title: "识别出3,216名高潜力客户，预计可触达2,780名",
-    summary:
-      "目标客群近半年日均存款下降15%以上，但可投资资产仍高于50万元。系统已按权限隐藏敏感身份信息，导出客户明细需完成审批。",
-    metric: "高潜客户数",
-    value: "3,216户",
-    change: "较上月 +8.4%",
-    secondary: "预计可触达",
-    secondaryValue: "2,780户",
-    chartTitle: "高潜客户机构分布",
-    chartUnit: "客户数（户）",
-    bars: [
-      { name: "南京", value: 91, display: "628" },
-      { name: "苏州", value: 78, display: "536" },
-      { name: "无锡", value: 63, display: "432" },
-      { name: "常州", value: 51, display: "351" },
-      { name: "南通", value: 43, display: "296" },
-      { name: "扬州", value: 34, display: "234" },
-    ],
+  "customer-manager": {
+    key: "customer-manager",
+    name: "赵经理",
+    initials: "赵",
+    role: "客户经理",
+    department: "零售金融部",
+    scope: "本人及所属机构客户",
+    canManage: false,
+    permissionLevel: "L1 · 业务查询",
   },
 };
 
-const initialMetrics: Metric[] = [
+const historyGroups = [
   {
-    id: "LN-001",
-    name: "各项贷款余额",
-    domain: "经营分析",
-    owner: "信贷管理部",
-    status: "已发布",
-    coverage: "13个维度",
-    definition: "报告期末金融机构对客户发放的人民币及外币贷款余额。",
+    label: "今天",
+    items: [
+      "今年各机构普惠小微贷款增速如何？",
+      "存款规模按机构维度如何变化？",
+      "各机构不良贷款率情况",
+    ],
   },
   {
-    id: "SME-017",
-    name: "普惠型小微企业贷款余额",
-    domain: "经营分析",
-    owner: "普惠金融部",
-    status: "已发布",
-    coverage: "16个维度",
-    definition: "单户授信总额1,000万元及以下的小微企业贷款、个体工商户经营性贷款和小微企业主经营性贷款余额。",
+    label: "昨天",
+    items: ["贷款投放结构分析", "利息收入同比增长情况"],
   },
   {
-    id: "RK-032",
-    name: "新增逾期贷款",
-    domain: "风险管控",
-    owner: "风险管理部",
-    status: "已发布",
-    coverage: "11个维度",
-    definition: "本统计周期内首次出现本金或利息逾期的贷款余额。",
-  },
-  {
-    id: "MK-008",
-    name: "高潜客户数",
-    domain: "客户营销",
-    owner: "零售金融部",
-    status: "审核中",
-    coverage: "8个维度",
-    definition: "符合资产、活跃度和产品持有特征的潜在价值客户数量。",
-  },
-  {
-    id: "DP-003",
-    name: "各项存款日均余额",
-    domain: "经营分析",
-    owner: "计划财务部",
-    status: "草稿",
-    coverage: "9个维度",
-    definition: "统计期内各日存款余额之和除以统计期自然日天数。",
+    label: "近 7 天",
+    items: ["客户活跃度趋势分析", "各机构存贷比情况"],
   },
 ];
 
-const historySeed = [
+const initialRequests: PermissionRequest[] = [
   {
-    time: "今天 09:42",
-    question: "今年上半年各农商行普惠小微贷款余额、同比增速和全省排名是多少？",
-    domain: "经营分析",
-    status: "成功",
+    id: "PA-2026-018",
+    applicant: "李经理",
+    department: "南京农商行",
+    role: "分支行负责人",
+    permission: "风险明细查询",
+    scope: "南京农商行及下辖网点",
+    reason: "季度资产质量复盘需要查看风险迁徙明细。",
+    submittedAt: "今天 09:26",
+    status: "待审批",
   },
   {
-    time: "昨天 16:18",
-    question: "近30天新增逾期贷款主要集中在哪些机构和产品？",
-    domain: "风险管控",
-    status: "成功",
+    id: "PA-2026-017",
+    applicant: "赵经理",
+    department: "零售金融部",
+    role: "客户经理",
+    permission: "客户明细导出",
+    scope: "本人管户客户",
+    reason: "用于高净值客户流失预警名单核验。",
+    submittedAt: "昨天 16:42",
+    status: "待审批",
   },
   {
-    time: "7月27日 11:06",
-    question: "二季度手机银行月活客户数及环比情况",
-    domain: "运营分析",
-    status: "成功",
-  },
-  {
-    time: "7月26日 14:35",
-    question: "筛选近半年存款下降但资产规模较高的客户群体",
-    domain: "客户营销",
-    status: "需审批",
+    id: "PA-2026-016",
+    applicant: "王专员",
+    department: "风险管理部",
+    role: "风险专员",
+    permission: "跨机构风险指标查询",
+    scope: "苏南片区",
+    reason: "区域风险监测专项分析。",
+    submittedAt: "7月28日 14:10",
+    status: "已通过",
   },
 ];
 
-function StatusBadge({ children, tone = "green" }: { children: React.ReactNode; tone?: "green" | "amber" | "gray" | "red" }) {
-  return <span className={`status-badge ${tone}`}>{children}</span>;
+const adminGroups: { label: string; items: { id: AdminView; label: string; icon: string }[] }[] = [
+  {
+    label: "数据底座",
+    items: [
+      { id: "admin-connections", label: "数据连接", icon: "◉" },
+      { id: "admin-semantic", label: "语义模型", icon: "◇" },
+    ],
+  },
+  {
+    label: "知识治理",
+    items: [
+      { id: "admin-metrics", label: "指标管理", icon: "▥" },
+      { id: "admin-terms", label: "业务术语", icon: "▣" },
+      { id: "admin-sql", label: "SQL 示例", icon: "SQL" },
+    ],
+  },
+  {
+    label: "AI 配置",
+    items: [
+      { id: "admin-models", label: "模型管理", icon: "✣" },
+      { id: "admin-prompts", label: "提示词编排", icon: "✦" },
+    ],
+  },
+  {
+    label: "安全管理",
+    items: [
+      { id: "admin-orgs", label: "组织与角色", icon: "♧" },
+      { id: "admin-permissions", label: "数据权限", icon: "♙" },
+      { id: "admin-approvals", label: "权限审批", icon: "✓" },
+      { id: "admin-masking", label: "脱敏策略", icon: "◈" },
+      { id: "admin-audit", label: "审计日志", icon: "▤" },
+    ],
+  },
+  {
+    label: "运营评测",
+    items: [
+      { id: "admin-evaluation", label: "效果评测", icon: "⌁" },
+      { id: "admin-feedback", label: "用户反馈", icon: "◌" },
+    ],
+  },
+];
+
+const dataSources = [
+  ["经营分析数据仓库", "Oracle", "经营分析", "连接正常", "2026-07-30 10:30", "128"],
+  ["风险管理集市", "PostgreSQL", "风险管理", "连接正常", "2026-07-30 09:15", "86"],
+  ["客户营销中台", "MySQL", "客户运营", "连接正常", "2026-07-30 08:40", "96"],
+  ["监管报送库", "GaussDB", "监管报送", "待校验", "2026-07-29 18:20", "54"],
+  ["运营主题库", "达梦", "运营管理", "连接正常", "2026-07-29 16:05", "72"],
+];
+
+const metrics = [
+  ["普惠小微贷款余额", "IND0001", "期末客户在本行的普惠小微信用贷款余额（不含贴现）。", "零售金融部", "已发布"],
+  ["不良贷款率", "IND0002", "期末不良贷款余额占期末贷款总额的比率。", "风险管理部", "已发布"],
+  ["各项存款日均余额", "IND0003", "统计期内各项存款余额的日平均值。", "存款业务部", "审核中"],
+  ["净利息收入", "IND0004", "报告期内贷款利息收入减去存款利息支出后的净额。", "财务会计部", "已发布"],
+  ["客户数", "IND0005", "期末在本行有信贷余额的客户数量。", "零售金融部", "已发布"],
+];
+
+function Badge({
+  children,
+  tone = "green",
+}: {
+  children: React.ReactNode;
+  tone?: "green" | "amber" | "red" | "gray" | "blue";
+}) {
+  return <span className={`badge ${tone}`}>{children}</span>;
+}
+
+function Switch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`switch ${checked ? "on" : ""}`}
+      onClick={onChange}
+      aria-label={label}
+      aria-pressed={checked}
+    >
+      <span />
+    </button>
+  );
 }
 
 export default function Home() {
-  const [activeView, setActiveView] = useState<View>("ask");
-  const [query, setQuery] = useState(queryExamples[0].query);
-  const [resultKind, setResultKind] = useState<ResultKind>("operations");
+  const [surface, setSurface] = useState<Surface>("workspace");
+  const [activeUserKey, setActiveUserKey] = useState<UserKey>("super-admin");
+  const [adminView, setAdminView] = useState<AdminView>("admin-home");
+  const [personalView, setPersonalView] = useState<PersonalView>("model-settings");
+  const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [showSql, setShowSql] = useState(false);
-  const [chartMode, setChartMode] = useState<"bar" | "table">("bar");
+  const [resultTab, setResultTab] = useState<"chart" | "data" | "sql">("chart");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requests, setRequests] = useState(initialRequests);
   const [toast, setToast] = useState("");
-  const [metrics, setMetrics] = useState(initialMetrics);
-  const [metricSearch, setMetricSearch] = useState("");
-  const [metricStatus, setMetricStatus] = useState("全部");
-  const [history, setHistory] = useState(historySeed);
-  const [historySearch, setHistorySearch] = useState("");
-  const [evaluationRunning, setEvaluationRunning] = useState(false);
-  const [evaluationDone, setEvaluationDone] = useState(false);
-  const [modelChecks, setModelChecks] = useState<Record<string, string>>({});
-  const [permissionMatrix, setPermissionMatrix] = useState<Record<string, boolean>>({
-    manager_export: true,
-    manager_customer: false,
-    branch_export: true,
-    branch_customer: false,
-    risk_export: true,
-    risk_customer: true,
-    marketing_export: false,
-    marketing_customer: true,
-  });
-  const [modal, setModal] = useState<"metric" | "term" | null>(null);
 
-  const result = resultCopy[resultKind];
-
-  const filteredMetrics = useMemo(
-    () =>
-      metrics.filter(
-        (metric) =>
-          (metricStatus === "全部" || metric.status === metricStatus) &&
-          `${metric.name}${metric.id}${metric.owner}${metric.domain}`
-            .toLowerCase()
-            .includes(metricSearch.toLowerCase()),
-      ),
-    [metricSearch, metricStatus, metrics],
-  );
-
-  const filteredHistory = useMemo(
-    () =>
-      history.filter((item) =>
-        `${item.question}${item.domain}`.toLowerCase().includes(historySearch.toLowerCase()),
-      ),
-    [history, historySearch],
-  );
+  const user = USERS[activeUserKey];
+  const pendingCount = requests.filter((request) => request.status === "待审批").length;
 
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   }
 
+  function selectUser(key: UserKey) {
+    setActiveUserKey(key);
+    setAccountMenuOpen(false);
+    setSurface("workspace");
+    setSubmittedQuery("");
+    setQuery("");
+    notify(`已切换为 ${USERS[key].name} · ${USERS[key].role}`);
+  }
+
+  function openSettings() {
+    if (user.canManage) {
+      setAdminView("admin-home");
+      setSurface("admin");
+    } else {
+      setPersonalView("model-settings");
+      setSurface("personal");
+    }
+  }
+
   function runQuery(text = query) {
-    const trimmed = text.trim();
-    if (!trimmed) {
+    const value = text.trim();
+    if (!value) {
       notify("请先输入一个业务问题");
       return;
     }
-    setQuery(trimmed);
+    setQuery(value);
     setIsRunning(true);
-    setShowSql(false);
     window.setTimeout(() => {
-      const nextKind: ResultKind = /逾期|不良|风险/.test(trimmed)
-        ? "risk"
-        : /客户|营销|触达/.test(trimmed)
-          ? "marketing"
-          : "operations";
-      setResultKind(nextKind);
-      setHistory((current) => [
-        {
-          time: "刚刚",
-          question: trimmed,
-          domain: nextKind === "risk" ? "风险管控" : nextKind === "marketing" ? "客户营销" : "经营分析",
-          status: nextKind === "marketing" ? "需审批" : "成功",
-        },
-        ...current.filter((item) => item.question !== trimmed),
-      ]);
+      setSubmittedQuery(value);
       setIsRunning(false);
-      notify("查询完成，结果已通过口径与权限校验");
-    }, 820);
+      setResultTab("chart");
+      notify("查询完成，结果已按当前账号权限过滤");
+    }, 760);
   }
 
-  function exportCsv() {
-    const rows = [
-      ["机构", result.chartUnit],
-      ...result.bars.map((bar) => [bar.name, bar.display]),
-    ];
-    const csv = `\uFEFF${rows.map((row) => row.join(",")).join("\n")}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `DataNavigator-${result.metric}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    notify("结果已导出，并记录在审计日志中");
+  function newQuery() {
+    setSubmittedQuery("");
+    setQuery("");
+    setSurface("workspace");
   }
 
-  function addMetric() {
-    setMetrics((current) => [
-      {
-        id: `NEW-${String(current.length + 1).padStart(3, "0")}`,
-        name: "新增指标（待完善）",
-        domain: "经营分析",
-        owner: "数据资产部",
-        status: "草稿",
-        coverage: "0个维度",
-        definition: "请补充指标业务定义、计算逻辑、来源和适用范围。",
-      },
-      ...current,
-    ]);
-    setModal(null);
-    notify("指标草稿已创建");
-  }
-
-  function publishMetric(id: string) {
-    setMetrics((current) =>
-      current.map((metric) =>
-        metric.id === id ? { ...metric, status: "已发布" as const } : metric,
-      ),
+  function updateRequest(id: string, status: RequestStatus) {
+    setRequests((current) =>
+      current.map((request) => (request.id === id ? { ...request, status } : request)),
     );
-    notify("指标已发布，变更记录已留痕");
+    notify(status === "已通过" ? "权限申请已通过并进入策略发布队列" : "权限申请已拒绝");
   }
 
-  function runEvaluation() {
-    setEvaluationRunning(true);
-    setEvaluationDone(false);
-    window.setTimeout(() => {
-      setEvaluationRunning(false);
-      setEvaluationDone(true);
-      notify("1,248条标准用例评测完成");
-    }, 1400);
-  }
-
-  function checkModel(name: string) {
-    setModelChecks((current) => ({ ...current, [name]: "检测中" }));
-    window.setTimeout(() => {
-      setModelChecks((current) => ({ ...current, [name]: "连接正常" }));
-      notify(`${name}连接检测通过`);
-    }, 700);
-  }
-
-  function goTo(view: View) {
-    setActiveView(view);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  function submitRequest(permission: string, scope: string, reason: string) {
+    const request: PermissionRequest = {
+      id: `PA-2026-${String(requests.length + 19).padStart(3, "0")}`,
+      applicant: user.name,
+      department: user.department,
+      role: user.role,
+      permission,
+      scope,
+      reason,
+      submittedAt: "刚刚",
+      status: "待审批",
+    };
+    setRequests((current) => [request, ...current]);
+    setRequestModalOpen(false);
+    notify("权限申请已提交，管理员审批后生效");
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand" onClick={() => goTo("ask")} role="button" tabIndex={0}>
-          <span className="brand-mark">DN</span>
-          <span>
-            <strong>DataNavigator</strong>
-            <small>农商数据领航员</small>
-          </span>
+    <>
+      {surface === "workspace" && (
+        <Workspace
+          user={user}
+          query={query}
+          setQuery={setQuery}
+          submittedQuery={submittedQuery}
+          isRunning={isRunning}
+          runQuery={runQuery}
+          newQuery={newQuery}
+          openSettings={openSettings}
+          resultTab={resultTab}
+          setResultTab={setResultTab}
+          notify={notify}
+          accountMenuOpen={accountMenuOpen}
+          setAccountMenuOpen={setAccountMenuOpen}
+          selectUser={selectUser}
+        />
+      )}
+
+      {surface === "admin" && (
+        <AdminPlatform
+          user={user}
+          view={adminView}
+          setView={setAdminView}
+          pendingCount={pendingCount}
+          requests={requests}
+          updateRequest={updateRequest}
+          back={() => setSurface("workspace")}
+          notify={notify}
+        />
+      )}
+
+      {surface === "personal" && (
+        <PersonalSettings
+          user={user}
+          view={personalView}
+          setView={setPersonalView}
+          requests={requests.filter((request) => request.applicant === user.name)}
+          back={() => setSurface("workspace")}
+          openRequest={() => setRequestModalOpen(true)}
+          notify={notify}
+        />
+      )}
+
+      {requestModalOpen && (
+        <PermissionRequestModal
+          user={user}
+          close={() => setRequestModalOpen(false)}
+          submit={submitRequest}
+        />
+      )}
+
+      {toast && <div className="toast"><span>✓</span>{toast}</div>}
+    </>
+  );
+}
+
+function Workspace({
+  user,
+  query,
+  setQuery,
+  submittedQuery,
+  isRunning,
+  runQuery,
+  newQuery,
+  openSettings,
+  resultTab,
+  setResultTab,
+  notify,
+  accountMenuOpen,
+  setAccountMenuOpen,
+  selectUser,
+}: {
+  user: DemoUser;
+  query: string;
+  setQuery: (value: string) => void;
+  submittedQuery: string;
+  isRunning: boolean;
+  runQuery: (value?: string) => void;
+  newQuery: () => void;
+  openSettings: () => void;
+  resultTab: "chart" | "data" | "sql";
+  setResultTab: (tab: "chart" | "data" | "sql") => void;
+  notify: (message: string) => void;
+  accountMenuOpen: boolean;
+  setAccountMenuOpen: (open: boolean) => void;
+  selectUser: (key: UserKey) => void;
+}) {
+  return (
+    <div className="workspace-shell">
+      <aside className="workspace-sidebar">
+        <button className="brand-button" onClick={newQuery}>
+          <strong>DataNavigator</strong>
+          <span>农 商 数 据 领 航 员</span>
+        </button>
+
+        <button className="new-query-button" onClick={newQuery}>
+          <span>＋</span> 新建问数
+        </button>
+
+        <button className="workspace-nav active" onClick={newQuery}>
+          <span>▣</span> 智能问数
+        </button>
+
+        <div className="history-groups">
+          {historyGroups.map((group) => (
+            <section key={group.label}>
+              <h3>{group.label}<span>⌄</span></h3>
+              {group.items.map((item) => (
+                <button key={item} onClick={() => runQuery(item)}>
+                  <span>▫</span><em>{item}</em>
+                </button>
+              ))}
+            </section>
+          ))}
         </div>
 
-        <div className="environment-card">
-          <span className="pulse-dot" />
-          <span>
-            <strong>演示环境</strong>
-            <small>模拟数据 · 2026年7月</small>
-          </span>
-        </div>
-
-        <nav aria-label="业务功能">
-          <p className="nav-label">业务工作台</p>
-          {businessNavigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${activeView === item.id ? "active" : ""}`}
-              onClick={() => goTo(item.id)}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-
-          <p className="nav-label admin-label">管理控制台</p>
-          {adminNavigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${activeView === item.id ? "active" : ""}`}
-              onClick={() => goTo(item.id)}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="user-card">
-          <span className="avatar">周</span>
-          <span>
-            <strong>周主管</strong>
-            <small>数据资产部 · 管理员</small>
-          </span>
-          <button aria-label="用户菜单">•••</button>
+        <div className="workspace-sidebar-footer">
+          <button onClick={() => notify("收藏夹已打开")}><span>☆</span>收藏</button>
+          <button onClick={() => notify("已展示全部历史记录")}><span>◷</span>历史记录</button>
+          <button onClick={() => notify("帮助中心将在正式版接入")}><span>?</span>帮助</button>
+          <button className="settings-entry" onClick={openSettings}><span>⚙</span>设置</button>
         </div>
       </aside>
 
-      <main className="main-content">
-        {activeView === "ask" && (
-          <AskView
-            query={query}
-            setQuery={setQuery}
-            isRunning={isRunning}
-            runQuery={runQuery}
-            result={result}
-            resultKind={resultKind}
-            chartMode={chartMode}
-            setChartMode={setChartMode}
-            showSql={showSql}
-            setShowSql={setShowSql}
-            exportCsv={exportCsv}
-            notify={notify}
-          />
-        )}
-        {activeView === "dashboard" && <DashboardView runQuery={runQuery} goTo={goTo} />}
-        {activeView === "metrics" && (
-          <MetricCenter
-            metrics={filteredMetrics}
-            search={metricSearch}
-            setSearch={setMetricSearch}
-            goTo={goTo}
-          />
-        )}
-        {activeView === "history" && (
-          <HistoryView
-            items={filteredHistory}
-            search={historySearch}
-            setSearch={setHistorySearch}
-            runQuery={runQuery}
-            goTo={goTo}
-          />
-        )}
-        {activeView === "admin-metrics" && (
-          <AdminMetrics
-            metrics={filteredMetrics}
-            search={metricSearch}
-            setSearch={setMetricSearch}
-            status={metricStatus}
-            setStatus={setMetricStatus}
-            openModal={() => setModal("metric")}
-            publishMetric={publishMetric}
-          />
-        )}
-        {activeView === "admin-semantic" && (
-          <SemanticAdmin openModal={() => setModal("term")} notify={notify} />
-        )}
-        {activeView === "admin-models" && (
-          <ModelAdmin modelChecks={modelChecks} checkModel={checkModel} />
-        )}
-        {activeView === "admin-permissions" && (
-          <PermissionAdmin
-            matrix={permissionMatrix}
-            setMatrix={setPermissionMatrix}
-            notify={notify}
-          />
-        )}
-        {activeView === "admin-evaluation" && (
-          <EvaluationAdmin
-            running={evaluationRunning}
-            done={evaluationDone}
-            runEvaluation={runEvaluation}
-          />
-        )}
-        {activeView === "admin-audit" && <AuditAdmin exportCsv={exportCsv} />}
-      </main>
-
-      {toast && <div className="toast"><span>✓</span>{toast}</div>}
-
-      {modal && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModal(null)}>
-          <div className="modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <p className="eyebrow">{modal === "metric" ? "指标治理" : "语义知识"}</p>
-                <h2>{modal === "metric" ? "新建指标草稿" : "新增业务术语"}</h2>
-              </div>
-              <button className="icon-button" onClick={() => setModal(null)} aria-label="关闭">×</button>
-            </div>
-            {modal === "metric" ? (
-              <div className="form-grid">
-                <label>指标名称<input defaultValue="新增指标（待完善）" /></label>
-                <label>指标编码<input defaultValue={`NEW-${String(metrics.length + 1).padStart(3, "0")}`} /></label>
-                <label>业务域<select defaultValue="经营分析"><option>经营分析</option><option>风险管控</option><option>客户营销</option></select></label>
-                <label>责任部门<select defaultValue="数据资产部"><option>数据资产部</option><option>风险管理部</option><option>普惠金融部</option></select></label>
-                <label className="full-field">业务定义<textarea defaultValue="请补充指标业务定义、计算逻辑、来源和适用范围。" /></label>
-              </div>
-            ) : (
-              <div className="form-grid">
-                <label>标准术语<input defaultValue="普惠小微" /></label>
-                <label>业务域<select defaultValue="信贷业务"><option>信贷业务</option><option>风险业务</option><option>零售业务</option></select></label>
-                <label className="full-field">同义词<input defaultValue="普惠贷、小微贷、普惠型小微企业贷款" /></label>
-                <label className="full-field">业务说明<textarea defaultValue="用于统一识别行内口语化表达，并映射至标准指标。" /></label>
+      <main className="workspace-main">
+        <header className="workspace-topbar">
+          <div className="workspace-title">智能问数</div>
+          <div className="account-area">
+            <button
+              className="account-button"
+              onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+              aria-expanded={accountMenuOpen}
+            >
+              <span className="avatar">{user.initials}</span>
+              <span className="account-copy">
+                <strong>{user.name}</strong>
+                <small>{user.role}</small>
+              </span>
+              <span className="account-chevron">⌄</span>
+            </button>
+            {accountMenuOpen && (
+              <div className="account-menu">
+                <p>演示账号切换</p>
+                {(Object.values(USERS) as DemoUser[]).map((item) => (
+                  <button
+                    key={item.key}
+                    className={item.key === user.key ? "selected" : ""}
+                    onClick={() => selectUser(item.key)}
+                  >
+                    <span className="mini-avatar">{item.initials}</span>
+                    <span><strong>{item.name}</strong><small>{item.role}</small></span>
+                    {item.key === user.key && <em>当前</em>}
+                  </button>
+                ))}
               </div>
             )}
-            <div className="modal-actions">
-              <button className="secondary-button" onClick={() => setModal(null)}>取消</button>
-              <button
-                className="primary-button"
-                onClick={modal === "metric" ? addMetric : () => { setModal(null); notify("业务术语已保存"); }}
-              >
-                保存草稿
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        </header>
+
+        {!submittedQuery ? (
+          <section className="ask-home">
+            <div className="ask-home-inner">
+              <p className="welcome-kicker">{user.department} · {user.scope}</p>
+              <h1>您好，想了解什么数据？</h1>
+              <QueryComposer
+                query={query}
+                setQuery={setQuery}
+                runQuery={runQuery}
+                isRunning={isRunning}
+                user={user}
+              />
+            </div>
+          </section>
+        ) : (
+          <QueryResult
+            user={user}
+            question={submittedQuery}
+            query={query}
+            setQuery={setQuery}
+            runQuery={runQuery}
+            isRunning={isRunning}
+            tab={resultTab}
+            setTab={setResultTab}
+            notify={notify}
+          />
+        )}
+      </main>
+      <span className="sr-only">管理控制台 指标治理 权限安全</span>
     </div>
   );
 }
 
-function PageHeader({
+function QueryComposer({
+  query,
+  setQuery,
+  runQuery,
+  isRunning,
+  user,
+  compact = false,
+}: {
+  query: string;
+  setQuery: (value: string) => void;
+  runQuery: (value?: string) => void;
+  isRunning: boolean;
+  user: DemoUser;
+  compact?: boolean;
+}) {
+  const scopeOptions = user.canManage
+    ? ["全省机构", "南京农商行", "苏州农商行", "风险管理部", "零售金融部"]
+    : [user.scope];
+
+  return (
+    <div className={`query-composer ${compact ? "compact" : ""}`}>
+      <textarea
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery();
+        }}
+        placeholder={compact ? "继续追问…" : "输入业务问题，例如：今年各机构普惠小微贷款增速如何？"}
+        aria-label="业务问题"
+      />
+      <div className="composer-footer">
+        <button className="attachment-button" aria-label="添加附件">⌕</button>
+        <label className="scope-select">
+          <span>▤</span>
+          <select aria-label="查询数据范围">
+            {scopeOptions.map((scope) => <option key={scope}>{scope}</option>)}
+          </select>
+        </label>
+        <button
+          className="send-button"
+          onClick={() => runQuery()}
+          disabled={isRunning}
+          aria-label="发送问题"
+        >
+          {isRunning ? "…" : "➤"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function QueryResult({
+  user,
+  question,
+  query,
+  setQuery,
+  runQuery,
+  isRunning,
+  tab,
+  setTab,
+  notify,
+}: {
+  user: DemoUser;
+  question: string;
+  query: string;
+  setQuery: (value: string) => void;
+  runQuery: (value?: string) => void;
+  isRunning: boolean;
+  tab: "chart" | "data" | "sql";
+  setTab: (tab: "chart" | "data" | "sql") => void;
+  notify: (message: string) => void;
+}) {
+  const rows = [
+    ["苏州农商行", "86.42", "28.67%", "18", 100],
+    ["南京农商行", "72.18", "22.41%", "16", 84],
+    ["无锡农商行", "61.35", "19.38%", "15", 71],
+    ["常州农商行", "48.27", "15.02%", "12", 56],
+    ["南通农商行", "36.59", "11.28%", "10", 42],
+    ["盐城农商行", "24.36", "8.74%", "9", 28],
+  ] as const;
+
+  return (
+    <section className="result-page">
+      <div className="question-bubble"><span>{question}</span><i>{user.initials}</i></div>
+      <div className="assistant-summary">
+        <span className="bot-avatar">◉</span>
+        <div>
+          <h2>已完成查询</h2>
+          <p>今年各机构普惠小微贷款整体保持较快增长。</p>
+          <p>其中，苏州农商行增速最高，其次是南京农商行和无锡农商行。</p>
+        </div>
+      </div>
+
+      <div className="result-card">
+        <div className="result-tabs">
+          <button className={tab === "chart" ? "active" : ""} onClick={() => setTab("chart")}>图表</button>
+          <button className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}>数据</button>
+          <button className={tab === "sql" ? "active" : ""} onClick={() => setTab("sql")}>SQL</button>
+        </div>
+        <div className="result-body">
+          <div className="result-visual">
+            {tab === "chart" && (
+              <div className="bar-table">
+                <div className="bar-header"><span /><span>贷款余额<small>（亿元）</small></span><span>同比增速<small>（%）</small></span><span>机构数量<small>（家）</small></span></div>
+                {rows.map((row) => (
+                  <div className="bar-row" key={row[0]}>
+                    <strong>{row[0]}</strong>
+                    <div className="bar-track"><i style={{ width: `${row[4]}%` }} /></div>
+                    <span>{row[1]}</span>
+                    <span>{row[2]}</span>
+                    <span>{row[3]}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tab === "data" && (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>机构</th><th>贷款余额（亿元）</th><th>同比增速</th><th>机构数量</th></tr></thead>
+                  <tbody>{rows.map((row) => <tr key={row[0]}><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td><td>{row[3]}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+            {tab === "sql" && (
+              <pre className="sql-block">{`SELECT institution_name,\n       SUM(loan_balance) AS loan_balance,\n       yoy_growth_rate,\n       COUNT(DISTINCT branch_id) AS branch_count\nFROM certified_sme_loan_metrics\nWHERE report_date = '2026-06-30'\n  AND institution_id IN (:authorized_scope)\nGROUP BY institution_name, yoy_growth_rate\nORDER BY yoy_growth_rate DESC;`}</pre>
+            )}
+          </div>
+          <aside className="validation-panel">
+            {[
+              ["指标口径", "已验证"],
+              ["数据来源", "已验证"],
+              ["权限范围", user.scope],
+            ].map((item) => (
+              <button key={item[0]} onClick={() => notify(`${item[0]}详情已展开`)}>
+                <span>✓</span><strong>{item[0]}</strong><small>{item[1]}</small><em>›</em>
+              </button>
+            ))}
+          </aside>
+        </div>
+      </div>
+
+      <div className="result-actions">
+        <button onClick={() => notify("已切换为追问模式")}>▣ 追问</button>
+        <button onClick={() => notify("已加入经营分析看板")}>▤ 加入看板</button>
+        <button onClick={() => notify("结果已导出，操作已写入审计日志")}>⇩ 导出</button>
+        <button onClick={() => notify("分享链接已复制")}>⌯ 分享</button>
+      </div>
+
+      <QueryComposer
+        query={query}
+        setQuery={setQuery}
+        runQuery={runQuery}
+        isRunning={isRunning}
+        user={user}
+        compact
+      />
+    </section>
+  );
+}
+
+function AdminPlatform({
+  user,
+  view,
+  setView,
+  pendingCount,
+  requests,
+  updateRequest,
+  back,
+  notify,
+}: {
+  user: DemoUser;
+  view: AdminView;
+  setView: (view: AdminView) => void;
+  pendingCount: number;
+  requests: PermissionRequest[];
+  updateRequest: (id: string, status: RequestStatus) => void;
+  back: () => void;
+  notify: (message: string) => void;
+}) {
+  return (
+    <div className="admin-shell">
+      <aside className="admin-sidebar">
+        <button className="admin-brand" onClick={() => setView("admin-home")}>
+          <strong>DataNavigator</strong><span>管理后台</span>
+        </button>
+        <div className="admin-nav">
+          {adminGroups.map((group) => (
+            <section key={group.label}>
+              <h3>{group.label}</h3>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={view === item.id ? "active" : ""}
+                  onClick={() => setView(item.id)}
+                >
+                  <span>{item.icon}</span>{item.label}
+                  {item.id === "admin-approvals" && pendingCount > 0 && <em>{pendingCount}</em>}
+                </button>
+              ))}
+            </section>
+          ))}
+        </div>
+      </aside>
+
+      <main className="admin-main">
+        <header className="admin-topbar">
+          <button className="back-button" onClick={back}>↩ 返回智能问数</button>
+          <div className="admin-user"><span className="avatar">{user.initials}</span><strong>{user.name}</strong><small>最高级数据权限</small></div>
+        </header>
+        {view === "admin-home" && <AdminHome setView={setView} pendingCount={pendingCount} />}
+        {view === "admin-connections" && <ConnectionsPage notify={notify} />}
+        {view === "admin-metrics" && <MetricsPage notify={notify} />}
+        {view === "admin-models" && <ModelsPage notify={notify} />}
+        {view === "admin-permissions" && <PermissionsPage notify={notify} />}
+        {view === "admin-approvals" && <ApprovalsPage requests={requests} updateRequest={updateRequest} />}
+        {view === "admin-evaluation" && <EvaluationPage notify={notify} />}
+        {![
+          "admin-home",
+          "admin-connections",
+          "admin-metrics",
+          "admin-models",
+          "admin-permissions",
+          "admin-approvals",
+          "admin-evaluation",
+        ].includes(view) && (
+          <GenericAdminPage
+            view={view as keyof typeof genericContent}
+            notify={notify}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function AdminPageHeader({
   eyebrow,
   title,
   description,
   action,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   action?: React.ReactNode;
 }) {
   return (
-    <header className="page-header">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
+    <header className="admin-page-header">
+      <div>{eyebrow && <p>{eyebrow}</p>}<h1>{title}</h1><span>{description}</span></div>
       {action}
     </header>
   );
 }
 
-function AskView({
-  query,
-  setQuery,
-  isRunning,
-  runQuery,
-  result,
-  resultKind,
-  chartMode,
-  setChartMode,
-  showSql,
-  setShowSql,
-  exportCsv,
-  notify,
-}: {
-  query: string;
-  setQuery: (value: string) => void;
-  isRunning: boolean;
-  runQuery: (value?: string) => void;
-  result: (typeof resultCopy)[ResultKind];
-  resultKind: ResultKind;
-  chartMode: "bar" | "table";
-  setChartMode: (value: "bar" | "table") => void;
-  showSql: boolean;
-  setShowSql: (value: boolean) => void;
-  exportCsv: () => void;
-  notify: (message: string) => void;
-}) {
+function AdminHome({ setView, pendingCount }: { setView: (view: AdminView) => void; pendingCount: number }) {
+  const cards: { title: string; description: string; status: string; icon: string; view: AdminView }[] = [
+    { title: "数据连接", description: "管理数据源连接，维护数据同步与可用性。", status: "已接入 12 个数据源", icon: "◉", view: "admin-connections" },
+    { title: "语义与指标", description: "管理业务术语、指标定义与认证，构建统一语义体系。", status: "326 项认证指标", icon: "▥", view: "admin-metrics" },
+    { title: "模型与提示词", description: "管理 AI 模型接入、问数流程与提示词模板。", status: "已接入 6 个模型", icon: "✣", view: "admin-models" },
+    { title: "权限与安全", description: "管理组织、岗位、数据权限及安全策略。", status: `待审批 ${pendingCount} 项`, icon: "♙", view: "admin-permissions" },
+    { title: "评测与运营", description: "评估问数效果，收集用户反馈，驱动持续优化。", status: "本月评测任务 18 个", icon: "⌁", view: "admin-evaluation" },
+  ];
   return (
-    <div className="page ask-page">
-      <section className="ask-hero">
-        <div className="hero-copy">
-          <p className="eyebrow">银行级智能问数</p>
-          <h1>你好，想了解哪项业务数据？</h1>
-          <p>用日常语言提问，系统会自动完成口径识别、权限校验、数据计算和分析解读。</p>
-        </div>
-        <div className="query-box">
-          <textarea
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key === "Enter") runQuery();
-            }}
-            aria-label="输入业务问题"
-            placeholder="例如：今年上半年各农商行普惠小微贷款余额和同比增速是多少？"
-          />
-          <div className="query-footer">
-            <span>已接入 326 项认证指标 · 当前范围：江苏省内全部机构</span>
-            <button className="primary-button query-submit" onClick={() => runQuery()} disabled={isRunning}>
-              {isRunning ? <><span className="spinner" />正在分析</> : "开始问数  ↗"}
-            </button>
-          </div>
-        </div>
-        <div className="query-examples">
-          {queryExamples.map((example) => (
-            <button key={example.eyebrow} onClick={() => runQuery(example.query)}>
-              <span>{example.eyebrow}</span>
-              <strong>{example.query}</strong>
-              <i>→</i>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className={`result-section ${isRunning ? "loading" : ""}`}>
-        <div className="section-title-row">
-          <div>
-            <p className="eyebrow">查询结果</p>
-            <h2>系统已理解你的问题</h2>
-          </div>
-          <div className="security-note"><span>盾</span> 已完成权限校验与敏感字段脱敏</div>
-        </div>
-
-        <div className="understanding-card">
-          <div>
-            <span>指标</span>
-            <strong>{result.metric}</strong>
-          </div>
-          <div>
-            <span>时间</span>
-            <strong>{resultKind === "risk" ? "近30天" : resultKind === "marketing" ? "近6个月" : "2026年上半年"}</strong>
-          </div>
-          <div>
-            <span>分析维度</span>
-            <strong>{resultKind === "marketing" ? "机构、客户层级" : "机构、产品"}</strong>
-          </div>
-          <div>
-            <span>数据范围</span>
-            <strong>权限内全部机构</strong>
-          </div>
-          <button onClick={() => notify("可在实际系统中修改指标、时间、维度和范围")}>调整口径</button>
-        </div>
-
-        <div className="analysis-grid">
-          <div className="analysis-main">
-            <div className="insight-card">
-              <div className="insight-heading">
-                <span className="ai-mark">AI</span>
-                <div>
-                  <p>业务结论</p>
-                  <h3>{result.title}</h3>
-                </div>
-              </div>
-              <p className="insight-summary">{result.summary}</p>
-              <div className="evidence-line">
-                <span>数据依据</span>
-                <span>贷款主题宽表</span>
-                <span>更新时间 08:30</span>
-                <span>指标版本 v3.2</span>
-              </div>
-            </div>
-
-            <div className="chart-card">
-              <div className="card-heading">
-                <div>
-                  <h3>{result.chartTitle}</h3>
-                  <p>{result.chartUnit} · 数据截至2026年6月末</p>
-                </div>
-                <div className="segmented-control">
-                  <button className={chartMode === "bar" ? "active" : ""} onClick={() => setChartMode("bar")}>图表</button>
-                  <button className={chartMode === "table" ? "active" : ""} onClick={() => setChartMode("table")}>明细</button>
-                </div>
-              </div>
-
-              {chartMode === "bar" ? (
-                <div className="bar-chart" aria-label={result.chartTitle}>
-                  {result.bars.map((bar) => (
-                    <div className="bar-row" key={bar.name}>
-                      <span className="bar-label">{bar.name}</span>
-                      <div className="bar-track"><span className={bar.tone === "warn" ? "warn" : ""} style={{ width: `${bar.value}%` }} /></div>
-                      <strong>{bar.display}</strong>
-                    </div>
-                  ))}
-                  <div className="chart-legend">
-                    <span><i className="legend-main" />正常范围</span>
-                    <span><i className="legend-warn" />需重点关注</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="table-wrap compact-table">
-                  <table>
-                    <thead><tr><th>机构</th><th>{result.chartUnit}</th><th>排名</th><th>状态</th></tr></thead>
-                    <tbody>
-                      {result.bars.map((bar, index) => (
-                        <tr key={bar.name}>
-                          <td><strong>{bar.name}农商银行</strong></td>
-                          <td>{bar.display}</td>
-                          <td>第 {index + 1} 名</td>
-                          <td>{bar.tone === "warn" ? <StatusBadge tone="amber">需关注</StatusBadge> : <StatusBadge>正常</StatusBadge>}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="follow-up-card">
-              <span>继续分析</span>
-              <button onClick={() => runQuery("下钻到产品类型并分析变化原因")}>下钻到产品类型</button>
-              <button onClick={() => runQuery("与去年同期对比并找出变化最大的机构")}>对比去年同期</button>
-              <button onClick={() => runQuery("找出低于全省平均水平的机构")}>查看异常机构</button>
-            </div>
-
-            <div className="sql-card">
-              <button className="sql-toggle" onClick={() => setShowSql(!showSql)}>
-                <span><b>SQL</b> 查看查询逻辑（专业模式）</span>
-                <span>{showSql ? "收起 ↑" : "展开 ↓"}</span>
-              </button>
-              {showSql && (
-                <pre>{`SELECT
-  org_name,
-  SUM(inclusive_sme_loan_balance) AS loan_balance,
-  yoy_growth_rate
-FROM certified_metric_view
-WHERE stat_date = '2026-06-30'
-  AND org_id IN (:authorized_org_scope)
-GROUP BY org_name, yoy_growth_rate
-ORDER BY loan_balance DESC
-LIMIT 100;`}</pre>
-              )}
-            </div>
-          </div>
-
-          <aside className="analysis-side">
-            <div className="kpi-card">
-              <span>{result.metric}</span>
-              <strong>{result.value}</strong>
-              <em>{result.change}</em>
-              <div className="mini-bars">{[36, 43, 51, 49, 62, 76, 83].map((height, index) => <i key={index} style={{ height }} />)}</div>
-            </div>
-            <div className="kpi-card secondary">
-              <span>{result.secondary}</span>
-              <strong>{result.secondaryValue}</strong>
-              <em>处于全省合理区间</em>
-            </div>
-            <div className="action-card">
-              <h3>结果操作</h3>
-              <button onClick={() => notify("已加入“经营驾驶舱”")}>＋ 加入分析看板</button>
-              <button onClick={exportCsv}>⇩ 导出结果</button>
-              <button onClick={() => notify("分享链接已复制，有效期7天")}>↗ 分享给同事</button>
-              <button onClick={() => notify("已收藏到常用问数")}>☆ 收藏本次问数</button>
-            </div>
-            <div className="trust-card">
-              <h3>结果可信度 <strong>高</strong></h3>
-              <div><span>指标口径匹配</span><b>100%</b></div>
-              <div><span>权限策略命中</span><b>4项</b></div>
-              <div><span>查询逻辑校验</span><b>通过</b></div>
-              <p>本次结果使用已发布指标和认证数据模型生成，可审计追溯。</p>
-            </div>
-          </aside>
-        </div>
-      </section>
+    <div className="admin-page">
+      <AdminPageHeader title="管理后台" description="配置问数能力、数据资产与安全策略" />
+      <div className="admin-home-grid">
+        {cards.map((card) => (
+          <article key={card.title}>
+            <span className="admin-card-icon">{card.icon}</span>
+            <div><h2>{card.title}</h2><p>{card.description}</p><small>✓ {card.status}</small><button onClick={() => setView(card.view)}>进入设置</button></div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
 
-function DashboardView({ runQuery, goTo }: { runQuery: (value: string) => void; goTo: (view: View) => void }) {
+function ConnectionsPage({ notify }: { notify: (message: string) => void }) {
   return (
-    <div className="page">
-      <PageHeader
-        eyebrow="个人分析空间"
-        title="经营驾驶舱"
-        description="集中查看已收藏的问数结果、机构趋势与业务预警。"
-        action={<button className="primary-button" onClick={() => goTo("ask")}>＋ 添加分析卡片</button>}
+    <div className="admin-page">
+      <AdminPageHeader
+        title="数据连接"
+        description="管理问数可访问的数据源与数据模型"
+        action={<button className="outline-action" onClick={() => notify("已创建新的数据源草稿")}>＋ 新建数据源</button>}
       />
-      <div className="stat-grid four">
-        <div className="stat-card"><span>各项贷款余额</span><strong>3.32万亿元</strong><em>同比 +9.6%</em></div>
-        <div className="stat-card"><span>各项存款余额</span><strong>4.16万亿元</strong><em>同比 +8.1%</em></div>
-        <div className="stat-card"><span>普惠小微贷款</span><strong>4,286亿元</strong><em>同比 +12.8%</em></div>
-        <div className="stat-card warning"><span>新增风险预警</span><strong>17项</strong><em>3项需立即关注</em></div>
+      <div className="admin-toolbar">
+        <label>⌕<input placeholder="搜索数据源名称" /></label>
+        <select><option>全部类型</option><option>Oracle</option><option>PostgreSQL</option></select>
+        <select><option>连接状态</option><option>连接正常</option><option>待校验</option></select>
       </div>
-      <div className="dashboard-grid">
-        <section className="panel wide">
-          <div className="card-heading"><div><h3>核心业务趋势</h3><p>近12个月 · 单位：万亿元</p></div><button className="text-button" onClick={() => runQuery("分析近12个月贷款与存款余额趋势")}>智能分析 →</button></div>
-          <div className="line-chart-sim">
-            <div className="axis-labels"><span>5.0</span><span>4.0</span><span>3.0</span><span>2.0</span></div>
-            <div className="chart-columns">
-              {[48, 52, 50, 58, 61, 65, 69, 72, 76, 79, 84, 88].map((height, index) => (
-                <div key={index}><i style={{ height: `${height}%` }} /><b style={{ height: `${height - 18}%` }} /><span>{index + 8 > 12 ? index - 4 : index + 8}月</span></div>
-              ))}
-            </div>
+      <div className="split-admin-layout">
+        <section className="admin-panel data-source-table">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>数据源名称</th><th>类型</th><th>业务域</th><th>同步状态</th><th>最近更新</th><th>可用表数</th><th>操作</th></tr></thead>
+              <tbody>
+                {dataSources.map((source) => (
+                  <tr key={source[0]}>
+                    <td><strong>{source[0]}</strong><small>{source[1]}</small></td>
+                    <td>{source[1]}</td><td>{source[2]}</td>
+                    <td><Badge tone={source[3] === "连接正常" ? "green" : "amber"}>● {source[3]}</Badge></td>
+                    <td>{source[4]}</td><td>{source[5]}</td><td><button className="dots">•••</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="chart-legend"><span><i className="legend-main" />存款余额</span><span><i className="legend-dark" />贷款余额</span></div>
         </section>
-        <section className="panel">
-          <div className="card-heading"><div><h3>机构综合排名</h3><p>按规模与增速综合评分</p></div></div>
-          <div className="ranking-list">
-            {["苏州农商银行","无锡农商银行","常州农商银行","南通农商银行","南京农商银行"].map((name, index) => (
-              <div key={name}><span className={index < 3 ? "rank top" : "rank"}>{index + 1}</span><strong>{name}</strong><em>{96 - index * 3}.2分</em></div>
+        <aside className="admin-detail-panel">
+          <h2>模型范围</h2><p>经营分析数据仓库 / Oracle</p>
+          {["表结构同步", "字段说明", "关系识别"].map((item) => <div className="setting-line" key={item}><span>{item}</span><Switch checked onChange={() => notify(`${item}设置已更新`)} label={item} /></div>)}
+          <div className="relation-map"><strong>dim_customer</strong><span>客户维度表</span><i /><div><b>fact_loan</b><b>dim_product</b></div></div>
+          <button onClick={() => notify("连接测试通过")}>▷ 测试连接</button>
+          <button onClick={() => notify("元数据同步任务已启动")}>⟳ 同步元数据</button>
+          <button onClick={() => notify("模型配置已打开")}>⚙ 配置模型</button>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function MetricsPage({ notify }: { notify: (message: string) => void }) {
+  const [selected, setSelected] = useState(metrics[0]);
+  return (
+    <div className="admin-page">
+      <AdminPageHeader
+        title="指标管理"
+        description="统一指标口径，让自然语言与业务定义保持一致"
+        action={<button className="outline-action" onClick={() => notify("指标草稿已创建")}>＋ 新建指标</button>}
+      />
+      <div className="subtabs"><button className="active">指标库</button><button>业务术语</button><button>SQL 示例</button></div>
+      <div className="admin-toolbar"><label>⌕<input placeholder="搜索指标名称" /></label><select><option>业务域</option></select><select><option>状态</option></select></div>
+      <div className="split-admin-layout metrics-layout">
+        <section className="admin-panel">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>指标名称</th><th>指标编码</th><th>业务定义</th><th>责任部门</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                {metrics.map((metric) => (
+                  <tr key={metric[1]} className={selected[1] === metric[1] ? "selected-row" : ""} onClick={() => setSelected(metric)}>
+                    <td><strong>● &nbsp;{metric[0]}</strong></td><td>{metric[1]}</td><td>{metric[2]}</td><td>{metric[3]}</td>
+                    <td><Badge tone={metric[4] === "已发布" ? "green" : "amber"}>{metric[4]}</Badge></td><td><button className="dots">•••</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <aside className="admin-detail-panel metric-detail">
+          <h2>{selected[0]}</h2>
+          <h3>标准定义</h3><p>{selected[2]}</p>
+          <h3>同义词</h3><div className="tag-row"><Badge>普惠小微</Badge><Badge>小微贷款</Badge><Badge>普惠贷</Badge></div>
+          <h3>可用维度</h3><ul><li>时间：年、季、月、日</li><li>机构：总行、分行、支行</li><li>客户类型：小微企业、个体工商户</li><li>币种：人民币、外币</li></ul>
+          <h3>数据来源</h3><p>经营分析数据仓库 / fact_loan_balance</p>
+          <div className="detail-actions"><button onClick={() => notify("指标编辑器已打开")}>编辑</button><button className="primary" onClick={() => notify("指标已发布")}>发布</button></div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function ModelsPage({ notify }: { notify: (message: string) => void }) {
+  const [autoCorrect, setAutoCorrect] = useState(true);
+  const [chartSuggest, setChartSuggest] = useState(true);
+  const [businessExplain, setBusinessExplain] = useState(true);
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="模型与问数流程" description="配置大模型、生成策略与结果解释能力" />
+      <div className="subtabs"><button className="active">模型服务</button><button>问数流程</button><button>提示词模板</button></div>
+      <div className="models-layout">
+        <section>
+          <div className="model-cards">
+            {[
+              ["意图理解模型", "DN–Intent–1.0", "✣"],
+              ["SQL 生成模型", "DN–SQL–1.0", "SQL"],
+              ["结果解读模型", "DN–Explain–1.0", "◌"],
+            ].map((model) => (
+              <article key={model[0]}><span>{model[2]}</span><h2>{model[0]}</h2><dl><div><dt>提供商</dt><dd>DataNavigator</dd></div><div><dt>模型</dt><dd>{model[1]}</dd></div></dl><p>● 运行中</p><footer><button onClick={() => notify(`${model[0]}配置已打开`)}>编辑配置</button><button onClick={() => notify(`${model[0]}测试通过`)}>测试</button></footer></article>
+            ))}
+          </div>
+          <div className="flow-strip">
+            {["问题理解", "指标匹配", "表字段召回", "SQL 生成", "安全校验", "结果解读"].map((step, index) => (
+              <div key={step}><strong>{index + 1}</strong><span>{step}</span>{index < 5 && <i>→</i>}</div>
             ))}
           </div>
         </section>
-        <section className="panel">
-          <div className="card-heading"><div><h3>风险事项</h3><p>按风险等级排序</p></div><StatusBadge tone="red">17项</StatusBadge></div>
-          <div className="alert-list">
-            <button onClick={() => runQuery("查看盐城近30天新增逾期明细")}><i className="risk-high" /><span><strong>新增逾期上升</strong><small>盐城 · 较前30天上升18.2%</small></span><b>高</b></button>
-            <button onClick={() => runQuery("查看制造业贷款集中度变化")}><i className="risk-mid" /><span><strong>行业集中度偏高</strong><small>制造业 · 超预警值2.4个百分点</small></span><b>中</b></button>
-            <button onClick={() => runQuery("查看普惠小微增速低于平均的机构")}><i className="risk-mid" /><span><strong>增速低于全省均值</strong><small>3家机构 · 连续2个月低于均值</small></span><b>中</b></button>
-          </div>
-        </section>
+        <aside className="admin-detail-panel model-policy">
+          <h2>默认策略</h2>
+          <label>模型<select><option>自动选择（推荐）</option></select></label>
+          <label>温度<select><option>0.3（推荐）</option></select></label>
+          <label>最大行数<select><option>1000</option></select></label>
+          <div className="setting-line"><span>自动纠错</span><Switch checked={autoCorrect} onChange={() => setAutoCorrect(!autoCorrect)} label="自动纠错" /></div>
+          <div className="setting-line"><span>图表推荐</span><Switch checked={chartSuggest} onChange={() => setChartSuggest(!chartSuggest)} label="图表推荐" /></div>
+          <div className="setting-line"><span>业务化解释</span><Switch checked={businessExplain} onChange={() => setBusinessExplain(!businessExplain)} label="业务化解释" /></div>
+          <button className="primary" onClick={() => notify("模型策略已保存")}>保存配置</button>
+          <button onClick={() => notify("模型运行测试通过")}>▷ 运行测试</button>
+        </aside>
       </div>
     </div>
   );
 }
 
-function MetricCenter({ metrics, search, setSearch, goTo }: { metrics: Metric[]; search: string; setSearch: (value: string) => void; goTo: (view: View) => void }) {
-  return (
-    <div className="page">
-      <PageHeader eyebrow="统一口径" title="指标中心" description="浏览全行已认证指标，查看业务定义、计算逻辑和适用范围。" />
-      <div className="metric-summary">
-        <div><strong>326</strong><span>已接入指标</span></div>
-        <div><strong>12</strong><span>业务主题</span></div>
-        <div><strong>95.8%</strong><span>口径一致率</span></div>
-        <div><strong>98.6%</strong><span>数据质量评分</span></div>
-      </div>
-      <div className="toolbar">
-        <label className="search-box">⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索指标名称、编码或责任部门" /></label>
-        <button className="secondary-button" onClick={() => goTo("admin-metrics")}>进入指标治理</button>
-      </div>
-      <div className="metric-card-grid">
-        {metrics.map((metric) => (
-          <article className="metric-card" key={metric.id}>
-            <div className="metric-card-top"><span>{metric.id}</span><StatusBadge tone={metric.status === "已发布" ? "green" : metric.status === "审核中" ? "amber" : "gray"}>{metric.status}</StatusBadge></div>
-            <h3>{metric.name}</h3>
-            <p>{metric.definition}</p>
-            <div className="metric-meta"><span>{metric.domain}</span><span>{metric.coverage}</span><span>{metric.owner}</span></div>
-            <button onClick={() => goTo("ask")}>使用该指标问数 →</button>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function HistoryView({ items, search, setSearch, runQuery, goTo }: { items: typeof historySeed; search: string; setSearch: (value: string) => void; runQuery: (value: string) => void; goTo: (view: View) => void }) {
-  return (
-    <div className="page">
-      <PageHeader eyebrow="可追溯分析" title="历史查询" description="回看、复用和管理你的问数记录，每次查询均保留口径与权限快照。" action={<button className="primary-button" onClick={() => goTo("ask")}>发起新问数</button>} />
-      <div className="toolbar">
-        <label className="search-box">⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索问题或业务场景" /></label>
-        <button className="secondary-button">全部记录⌄</button>
-      </div>
-      <section className="panel table-panel">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>查询时间</th><th>业务问题</th><th>业务域</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              {items.map((item, index) => (
-                <tr key={`${item.question}-${index}`}>
-                  <td className="muted-cell">{item.time}</td>
-                  <td className="question-cell">{item.question}</td>
-                  <td>{item.domain}</td>
-                  <td><StatusBadge tone={item.status === "成功" ? "green" : "amber"}>{item.status}</StatusBadge></td>
-                  <td><button className="row-action" onClick={() => { goTo("ask"); runQuery(item.question); }}>再次查询</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function AdminMetrics({ metrics, search, setSearch, status, setStatus, openModal, publishMetric }: { metrics: Metric[]; search: string; setSearch: (value: string) => void; status: string; setStatus: (value: string) => void; openModal: () => void; publishMetric: (id: string) => void }) {
-  return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 数据治理" title="指标治理" description="管理指标从草拟、评审、发布到下线的完整生命周期。" action={<button className="primary-button" onClick={openModal}>＋ 新建指标</button>} />
-      <div className="stat-grid">
-        <div className="stat-card"><span>指标总数</span><strong>326</strong><em>本月新增 12</em></div>
-        <div className="stat-card"><span>已发布</span><strong>298</strong><em>占比 91.4%</em></div>
-        <div className="stat-card"><span>待审核</span><strong>18</strong><em>6项即将超时</em></div>
-        <div className="stat-card"><span>口径冲突</span><strong>3</strong><em>需要治理</em></div>
-      </div>
-      <div className="toolbar">
-        <label className="search-box">⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索指标名称、编码或责任部门" /></label>
-        <select value={status} onChange={(event) => setStatus(event.target.value)}><option>全部</option><option>已发布</option><option>审核中</option><option>草稿</option></select>
-      </div>
-      <section className="panel table-panel">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>指标编码</th><th>指标名称</th><th>业务域</th><th>责任部门</th><th>覆盖范围</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              {metrics.map((metric) => (
-                <tr key={metric.id}>
-                  <td className="mono-cell">{metric.id}</td>
-                  <td className="question-cell">{metric.name}</td>
-                  <td>{metric.domain}</td>
-                  <td>{metric.owner}</td>
-                  <td>{metric.coverage}</td>
-                  <td><StatusBadge tone={metric.status === "已发布" ? "green" : metric.status === "审核中" ? "amber" : "gray"}>{metric.status}</StatusBadge></td>
-                  <td>{metric.status === "已发布" ? <button className="row-action">编辑</button> : <button className="row-action" onClick={() => publishMetric(metric.id)}>发布</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SemanticAdmin({ openModal, notify }: { openModal: () => void; notify: (message: string) => void }) {
-  const terms = [
-    ["普惠小微", "普惠贷、小微贷、普惠型小微企业贷款", "信贷业务", "12"],
-    ["不良", "不良贷、不良贷款、五级分类后三类", "风险业务", "18"],
-    ["月活", "MAU、月活客户、月活跃用户", "电子银行", "9"],
-    ["AUM", "客户资产、管理资产、金融资产", "零售业务", "15"],
-    ["本年", "今年、年初至今、YTD", "公共术语", "23"],
-  ];
-  return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 语义标准" title="语义知识库" description="统一金融术语、行内简称和个性化表达，提升口语化意图识别。" action={<button className="primary-button" onClick={openModal}>＋ 新增术语</button>} />
-      <div className="knowledge-banner">
-        <div><span className="banner-mark">义</span><span><strong>金融语义网络</strong><small>已建立指标、维度、实体和同义词之间的可解释映射关系</small></span></div>
-        <div><strong>1,842</strong><span>标准术语</span></div>
-        <div><strong>5,628</strong><span>同义表达</span></div>
-        <div><strong>94.7%</strong><span>意图准确率</span></div>
-      </div>
-      <div className="toolbar"><label className="search-box">⌕<input placeholder="搜索术语、简称或同义词" /></label><button className="secondary-button" onClick={() => notify("待治理表达清单已刷新")}>待治理表达 26</button></div>
-      <section className="panel table-panel">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>标准术语</th><th>同义词与常见问法</th><th>业务域</th><th>关联指标</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              {terms.map((term) => <tr key={term[0]}><td className="question-cell">{term[0]}</td><td>{term[1]}</td><td>{term[2]}</td><td>{term[3]}项</td><td><StatusBadge>生效中</StatusBadge></td><td><button className="row-action">维护</button></td></tr>)}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ModelAdmin({ modelChecks, checkModel }: { modelChecks: Record<string, string>; checkModel: (name: string) => void }) {
-  const models = [
-    { name: "信贷主题数据集市", type: "GaussDB", tables: "48张表", update: "08:30", health: "正常" },
-    { name: "风险管理数据集市", type: "Oracle", tables: "32张表", update: "08:22", health: "正常" },
-    { name: "客户营销数据集市", type: "OceanBase", tables: "27张表", update: "08:18", health: "正常" },
-    { name: "监管报送数据仓库", type: "Hive", tables: "65张表", update: "昨日 23:40", health: "延迟" },
-  ];
-  return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 数据底座" title="数据模型" description="维护可信数据源、业务主题、表关系和标准连接路径。" action={<button className="primary-button">＋ 接入数据源</button>} />
-      <div className="model-grid">
-        {models.map((model) => (
-          <article className="model-card" key={model.name}>
-            <div className="model-card-top"><span className="database-icon">DB</span><StatusBadge tone={model.health === "正常" ? "green" : "amber"}>{model.health}</StatusBadge></div>
-            <h3>{model.name}</h3><p>{model.type} · {model.tables}</p>
-            <dl><div><dt>最近同步</dt><dd>{model.update}</dd></div><div><dt>认证关系</dt><dd>18条</dd></div><div><dt>可用指标</dt><dd>86项</dd></div></dl>
-            <button className="secondary-button full-button" onClick={() => checkModel(model.name)}>{modelChecks[model.name] || "检测连接"}</button>
-          </article>
-        ))}
-      </div>
-      <section className="panel relation-panel">
-        <div className="card-heading"><div><h3>认证模型关系</h3><p>NL2SQL仅可使用已审核的表关联与字段映射</p></div><button className="text-button">管理关系 →</button></div>
-        <div className="relation-flow"><span>机构维表</span><i>1 : N</i><span>贷款事实表</span><i>N : 1</i><span>客户维表</span><i>1 : N</i><span>风险分类表</span></div>
-      </section>
-    </div>
-  );
-}
-
-function PermissionAdmin({ matrix, setMatrix, notify }: { matrix: Record<string, boolean>; setMatrix: React.Dispatch<React.SetStateAction<Record<string, boolean>>>; notify: (message: string) => void }) {
-  const roles = [
-    ["总行管理者", "manager"],
-    ["分支行负责人", "branch"],
-    ["风控专员", "risk"],
-    ["客户经理", "marketing"],
+function PermissionsPage({ notify }: { notify: (message: string) => void }) {
+  const [department, setDepartment] = useState("南京农商行");
+  const [role, setRole] = useState("分支行负责人");
+  const [scope, setScope] = useState("本机构及下辖网点");
+  const [permissions, setPermissions] = useState<Record<string, boolean>>({
+    metric_view: true,
+    metric_export: true,
+    metric_share: true,
+    risk_view: true,
+    risk_export: false,
+    risk_share: false,
+    customer_view: true,
+    customer_export: true,
+    customer_share: false,
+    sql_view: true,
+    sql_export: false,
+    sql_share: false,
+  });
+  const rows = [
+    ["经营指标查询", "metric"],
+    ["风险明细查询", "risk"],
+    ["客户明细查询", "customer"],
+    ["SQL 查看", "sql"],
   ];
   function toggle(key: string) {
-    setMatrix((current) => ({ ...current, [key]: !current[key] }));
-    notify("权限策略已更新，变更将在发布后生效");
+    setPermissions((current) => ({ ...current, [key]: !current[key] }));
   }
   return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 安全合规" title="权限与数据安全" description="按机构、岗位、行、列和字段统一控制数据访问、脱敏与导出。" action={<button className="primary-button" onClick={() => notify("策略发布成功")}>发布策略</button>} />
-      <div className="security-grid">
-        <div className="security-stat"><span className="security-symbol">盾</span><div><strong>42</strong><span>生效中策略</span></div><em>全部正常</em></div>
-        <div className="security-stat"><span className="security-symbol">隐</span><div><strong>28</strong><span>敏感字段</span></div><em>已配置脱敏</em></div>
-        <div className="security-stat"><span className="security-symbol">审</span><div><strong>100%</strong><span>审计覆盖率</span></div><em>全链路留痕</em></div>
+    <div className="admin-page">
+      <AdminPageHeader title="权限与数据安全" description="仅最高级数据管理员可跨部门配置岗位权限和可查询数据范围" />
+      <div className="subtabs"><button className="active">角色权限</button><button>数据范围</button><button>脱敏策略</button><button>审计日志</button></div>
+      <div className="permission-scope-bar">
+        <label>部门<select value={department} onChange={(event) => setDepartment(event.target.value)}><option>南京农商行</option><option>苏州农商行</option><option>风险管理部</option><option>零售金融部</option><option>计划财务部</option></select></label>
+        <label>岗位<select value={role} onChange={(event) => setRole(event.target.value)}><option>分支行负责人</option><option>风险专员</option><option>客户经理</option><option>数据管理员</option></select></label>
+        <Badge tone="blue">最高级权限可见</Badge>
       </div>
-      <section className="panel permission-panel">
-        <div className="card-heading"><div><h3>岗位权限矩阵</h3><p>开关状态为当前草稿，发布后同步至问数引擎</p></div></div>
+      <div className="permission-layout">
+        <aside className="role-list admin-panel">
+          <h2>岗位角色</h2>
+          {["总行管理层", "分支行负责人", "风险专员", "客户经理", "数据管理员"].map((item) => (
+            <button className={item === role ? "active" : ""} key={item} onClick={() => setRole(item)}>♙ {item}</button>
+          ))}
+        </aside>
+        <section className="admin-panel permission-matrix">
+          <h2>{department} · {role} 权限矩阵</h2>
+          <div className="matrix-head"><span>能力</span><span>查看</span><span>导出</span><span>分享</span></div>
+          {rows.map(([label, key]) => (
+            <div className="matrix-row" key={key}>
+              <strong>{label}</strong>
+              {["view", "export", "share"].map((action) => (
+                <Switch key={action} checked={permissions[`${key}_${action}`]} onChange={() => toggle(`${key}_${action}`)} label={`${label}${action}`} />
+              ))}
+            </div>
+          ))}
+        </section>
+        <aside className="admin-panel scope-editor">
+          <h2>可查询数据范围</h2>
+          <label>机构范围<select value={scope} onChange={(event) => setScope(event.target.value)}><option>本机构及下辖网点</option><option>本机构</option><option>指定机构</option><option>全省机构</option></select></label>
+          <label>业务域<select><option>经营分析、风险管理</option><option>仅经营分析</option><option>全部业务域</option></select></label>
+          <label>时间范围<select><option>近 3 年</option><option>本年度</option><option>不限</option></select></label>
+          <div className="scope-rule"><strong>行级条件</strong><p>所属机构 = 当前岗位所属机构及下辖机构</p></div>
+          <div className="scope-rule"><strong>字段脱敏</strong><p>客户姓名：张*<br />身份证号：3201********1234</p></div>
+        </aside>
+      </div>
+      <div className="permission-footer"><p>◈ 所有权限变更自动记录审计日志，策略发布后即时生效。</p><button onClick={() => notify("已进入岗位权限模拟测试")}>模拟用户测试</button><button className="primary" onClick={() => notify(`${department} · ${role} 权限策略已保存`)}>保存策略</button></div>
+    </div>
+  );
+}
+
+function ApprovalsPage({
+  requests,
+  updateRequest,
+}: {
+  requests: PermissionRequest[];
+  updateRequest: (id: string, status: RequestStatus) => void;
+}) {
+  const [status, setStatus] = useState("全部");
+  const filtered = requests.filter((request) => status === "全部" || request.status === status);
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="权限审批" description="审核岗位人员发起的数据访问与导出权限申请" />
+      <div className="approval-summary">
+        <article><span>待审批</span><strong>{requests.filter((item) => item.status === "待审批").length}</strong></article>
+        <article><span>本月已通过</span><strong>23</strong></article>
+        <article><span>平均处理时长</span><strong>1.6 小时</strong></article>
+      </div>
+      <div className="admin-toolbar"><label>⌕<input placeholder="搜索申请人或申请编号" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option>全部</option><option>待审批</option><option>已通过</option><option>已拒绝</option></select></div>
+      <section className="admin-panel approvals-table">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>岗位角色</th><th>机构范围</th><th>指标查询</th><th>明细导出</th><th>客户敏感字段</th><th>审计级别</th></tr></thead>
+            <thead><tr><th>申请编号</th><th>申请人</th><th>部门 / 岗位</th><th>申请权限</th><th>数据范围</th><th>申请理由</th><th>提交时间</th><th>状态与操作</th></tr></thead>
             <tbody>
-              {roles.map(([label, key]) => (
-                <tr key={key}>
-                  <td className="question-cell">{label}</td>
-                  <td>{key === "manager" ? "全省机构" : key === "branch" ? "本机构及下辖" : "授权机构"}</td>
-                  <td><StatusBadge>允许</StatusBadge></td>
-                  <td><button className={`switch ${matrix[`${key}_export`] ? "on" : ""}`} onClick={() => toggle(`${key}_export`)} aria-label={`${label}明细导出权限`}><i /></button></td>
-                  <td><button className={`switch ${matrix[`${key}_customer`] ? "on" : ""}`} onClick={() => toggle(`${key}_customer`)} aria-label={`${label}客户敏感字段权限`}><i /></button></td>
-                  <td>{key === "marketing" || key === "risk" ? "增强审计" : "标准审计"}</td>
+              {filtered.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.id}</td><td><strong>{request.applicant}</strong></td><td>{request.department}<small>{request.role}</small></td>
+                  <td>{request.permission}</td><td>{request.scope}</td><td>{request.reason}</td><td>{request.submittedAt}</td>
+                  <td>
+                    {request.status === "待审批" ? (
+                      <div className="approval-actions"><button onClick={() => updateRequest(request.id, "已拒绝")}>拒绝</button><button className="primary" onClick={() => updateRequest(request.id, "已通过")}>通过</button></div>
+                    ) : <Badge tone={request.status === "已通过" ? "green" : "red"}>{request.status}</Badge>}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </section>
-      <div className="policy-grid">
-        <article><span>行级权限</span><strong>按机构编码自动注入查询条件</strong><p>确保分支机构只能查看授权范围内的数据。</p></article>
-        <article><span>动态脱敏</span><strong>按岗位展示不同敏感字段</strong><p>手机号、证件号、姓名等字段按策略实时处理。</p></article>
-        <article><span>导出管控</span><strong>高风险明细触发审批与水印</strong><p>导出、下载与分享动作全部进入审计链路。</p></article>
+    </div>
+  );
+}
+
+function EvaluationPage({ notify }: { notify: (message: string) => void }) {
+  const evaluationRows = [
+    ["经营分析标准集", "120", "96.2%", "93.3%", "2026-07-30 10:30", "已完成"],
+    ["风险复杂查询集", "98", "93.5%", "90.2%", "2026-07-30 09:15", "已完成"],
+    ["客户营销问数集", "110", "94.1%", "91.8%", "2026-07-29 16:45", "已完成"],
+    ["跨机构口径一致性", "86", "98.6%", "94.7%", "2026-07-29 11:20", "已完成"],
+  ];
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="问数效果评测" description="用标准问题持续验证意图、SQL 与结果准确性" action={<div className="header-actions"><button className="outline-action">＋ 新建评测集</button><button className="primary-action" onClick={() => notify("全量评测任务已启动")}>运行评测</button></div>} />
+      <div className="evaluation-stats">
+        {[["意图识别准确率", "95.6%"], ["SQL 生成成功率", "92.4%"], ["平均响应", "2.3秒"], ["口径一致率", "97.1%"]].map((item) => <article key={item[0]}><span>◎</span><div><p>{item[0]}</p><strong>{item[1]}</strong></div></article>)}
+      </div>
+      <div className="evaluation-layout">
+        <section className="admin-panel"><h2>评测集</h2><div className="table-wrap"><table><thead><tr><th>评测集名称</th><th>用例数</th><th>意图准确率</th><th>SQL 成功率</th><th>最近运行</th><th>状态</th></tr></thead><tbody>{evaluationRows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={cell}>{index === 5 ? <Badge>{cell}</Badge> : cell}</td>)}</tr>)}</tbody></table></div></section>
+        <aside className="admin-panel failed-cases"><h2>失败用例</h2>{[["上月各分支机构贷款余额前十名？", "意图偏差"], ["不良贷款率按行业维度如何分布？", "字段匹配错误"], ["与去年同期相比，存款日均增量是多少？", "口径冲突"]].map((item, index) => <article key={item[0]}><span>{index + 1}</span><div><strong>{item[0]}</strong><Badge tone={index === 2 ? "blue" : "amber"}>{item[1]}</Badge></div><button onClick={() => notify("失败用例详情已打开")}>查看详情</button></article>)}</aside>
       </div>
     </div>
   );
 }
 
-function EvaluationAdmin({ running, done, runEvaluation }: { running: boolean; done: boolean; runEvaluation: () => void }) {
-  const testRows = [
-    ["经营分析标准集", "486", "96.1%", "93.4%", "2.1秒", "通过"],
-    ["风险管控复杂查询集", "328", "94.8%", "91.2%", "2.7秒", "通过"],
-    ["客户营销权限集", "274", "95.3%", "90.7%", "2.4秒", "通过"],
-    ["跨机构口径一致性集", "160", "97.5%", "95.8%", "2.8秒", "通过"],
-  ];
+const genericContent: Record<Exclude<AdminView, "admin-home" | "admin-connections" | "admin-metrics" | "admin-models" | "admin-permissions" | "admin-approvals" | "admin-evaluation">, [string, string, string[]]> = {
+  "admin-semantic": ["语义模型", "维护数据表关系、业务实体和字段语义映射", ["已认证主题模型 18 个", "自动关系识别 92.6%", "待审核字段说明 26 项"]],
+  "admin-terms": ["业务术语", "统一行内简称、同义词与业务表达", ["标准术语 1,842 个", "同义表达 5,628 个", "待治理表达 26 个"]],
+  "admin-sql": ["SQL 示例", "沉淀高质量问法与标准 SQL 对，增强生成准确率", ["标准示例 2,460 条", "本月新增 86 条", "采用率 78.4%"]],
+  "admin-prompts": ["提示词编排", "分场景配置意图识别、SQL 生成和结果解读模板", ["生产模板 24 个", "灰度模板 6 个", "平均版本 3.8"]],
+  "admin-orgs": ["组织与角色", "管理部门、机构层级、岗位角色与人员映射", ["机构节点 486 个", "岗位角色 32 个", "在岗人员 8,642 人"]],
+  "admin-masking": ["脱敏策略", "按岗位与使用场景配置敏感字段展示规则", ["敏感字段 28 个", "生效策略 42 条", "覆盖率 100%"]],
+  "admin-audit": ["审计日志", "记录查询、导出、授权与异常访问行为", ["今日查询 12,846 次", "权限拦截 36 次", "异常告警 3 项"]],
+  "admin-feedback": ["用户反馈", "汇总业务人员评价与改进建议", ["本月反馈 160 条", "有帮助 132 条", "待改进 28 条"]],
+};
+
+function GenericAdminPage({ view, notify }: { view: keyof typeof genericContent; notify: (message: string) => void }) {
+  const [title, description, stats] = genericContent[view];
   return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 模型运营" title="评测中心" description="用标准问题、预期SQL和预期结果持续验证问数质量。" action={<button className="primary-button" disabled={running} onClick={runEvaluation}>{running ? "评测运行中…" : "▶ 运行全量评测"}</button>} />
-      <div className="evaluation-hero">
-        <div className="score-ring"><strong>{done ? "94.9" : "94.7"}</strong><span>综合得分</span></div>
-        <div className="evaluation-copy"><StatusBadge>达到上线标准</StatusBadge><h2>{done ? "最新回归测试已完成" : "当前版本 v0.9.3"}</h2><p>覆盖经营分析、风险管控、客户营销及跨机构口径一致性场景。</p></div>
-        <div className="evaluation-metrics"><div><span>意图识别</span><strong>{done ? "95.2%" : "94.7%"}</strong><small>目标 ≥94%</small></div><div><span>SQL成功率</span><strong>{done ? "92.1%" : "91.8%"}</strong><small>目标 ≥90%</small></div><div><span>平均响应</span><strong>2.4秒</strong><small>目标 ≤3秒</small></div><div><span>口径一致率</span><strong>95.8%</strong><small>目标 ≥95%</small></div></div>
-      </div>
-      {running && <div className="evaluation-progress"><span style={{ width: "74%" }} /><p>正在执行标准用例与权限回归测试… 924 / 1,248</p></div>}
-      <section className="panel table-panel">
-        <div className="card-heading"><div><h3>评测集表现</h3><p>最近一次：2026-07-29 08:00</p></div><button className="text-button">查看失败用例 →</button></div>
-        <div className="table-wrap"><table><thead><tr><th>评测集</th><th>用例数</th><th>意图准确率</th><th>SQL成功率</th><th>平均响应</th><th>结果</th></tr></thead><tbody>{testRows.map((row) => <tr key={row[0]}>{row.slice(0,5).map((value,index) => <td className={index === 0 ? "question-cell" : ""} key={value}>{value}</td>)}<td><StatusBadge>{row[5]}</StatusBadge></td></tr>)}</tbody></table></div>
+    <div className="admin-page">
+      <AdminPageHeader title={title} description={description} action={<button className="outline-action" onClick={() => notify(`${title}新建面板已打开`)}>＋ 新建</button>} />
+      <div className="generic-stats">{stats.map((stat) => <article key={stat}><span>✓</span><strong>{stat}</strong><p>数据状态正常，最近更新于今天 09:30</p></article>)}</div>
+      <section className="admin-panel generic-workbench">
+        <header><div><h2>{title}工作台</h2><p>当前配置均已纳入版本控制和审计留痕。</p></div><button className="primary-action" onClick={() => notify(`${title}配置已保存`)}>保存配置</button></header>
+        <div className="generic-list">
+          {["生产配置", "灰度验证", "待审核变更", "历史版本"].map((item, index) => <button key={item}><span>{index + 1}</span><strong>{item}</strong><small>{index === 0 ? "运行中" : index === 1 ? "验证中" : index === 2 ? "3 项" : "查看记录"}</small><em>›</em></button>)}
+        </div>
       </section>
     </div>
   );
 }
 
-function AuditAdmin({ exportCsv }: { exportCsv: () => void }) {
-  const logs = [
-    ["09:42:18", "周主管", "智能问数", "查询普惠小微贷款余额", "全省机构", "成功", "低"],
-    ["09:39:04", "李经理", "明细导出", "导出高潜客户清单", "南京分行", "审批中", "高"],
-    ["09:31:52", "系统任务", "策略同步", "岗位权限策略 v18", "全行", "成功", "低"],
-    ["09:18:27", "王专员", "风险查询", "查询新增逾期客户明细", "盐城分行", "成功", "中"],
-    ["08:56:11", "赵经理", "智能问数", "查询他行客户身份证号", "无权限", "已拦截", "高"],
-  ];
+function PersonalSettings({
+  user,
+  view,
+  setView,
+  requests,
+  back,
+  openRequest,
+  notify,
+}: {
+  user: DemoUser;
+  view: PersonalView;
+  setView: (view: PersonalView) => void;
+  requests: PermissionRequest[];
+  back: () => void;
+  openRequest: () => void;
+  notify: (message: string) => void;
+}) {
+  const [chartSuggest, setChartSuggest] = useState(true);
+  const [explainMode, setExplainMode] = useState(true);
   return (
-    <div className="page">
-      <PageHeader eyebrow="管理控制台 / 全链路留痕" title="审计监控" description="监控查询、导出、权限变更和异常访问，满足银行业合规要求。" action={<button className="secondary-button" onClick={exportCsv}>⇩ 导出审计报告</button>} />
-      <div className="stat-grid">
-        <div className="stat-card"><span>今日查询</span><strong>12,846</strong><em>较昨日 +8.2%</em></div>
-        <div className="stat-card"><span>权限拦截</span><strong>36</strong><em>均已处置</em></div>
-        <div className="stat-card"><span>敏感导出</span><strong>14</strong><em>5项审批中</em></div>
-        <div className="stat-card warning"><span>异常告警</span><strong>3</strong><em>1项待核查</em></div>
+    <div className="personal-shell">
+      <aside className="personal-sidebar">
+        <button className="admin-brand" onClick={back}><strong>DataNavigator</strong><span>个人设置</span></button>
+        <button className={view === "model-settings" ? "active" : ""} onClick={() => setView("model-settings")}>✣ 模型设置</button>
+        <button className={view === "my-permissions" ? "active" : ""} onClick={() => setView("my-permissions")}>♙ 我的权限</button>
+        <button className="personal-back" onClick={back}>↩ 返回智能问数</button>
+      </aside>
+      <main className="personal-main">
+        <header className="personal-user"><span className="avatar">{user.initials}</span><div><strong>{user.name}</strong><small>{user.department} · {user.role}</small></div></header>
+        {view === "model-settings" ? (
+          <div className="personal-page">
+            <AdminPageHeader title="模型设置" description="调整个人问数偏好，不影响其他用户" />
+            <section className="personal-card">
+              <label>默认结果展示<select><option>自动推荐</option><option>优先图表</option><option>优先表格</option></select></label>
+              <label>回答详细程度<select><option>业务摘要 + 关键数据</option><option>精简摘要</option><option>详细分析</option></select></label>
+              <div className="setting-line"><span><strong>图表智能推荐</strong><small>根据数据特征自动选择展示方式</small></span><Switch checked={chartSuggest} onChange={() => setChartSuggest(!chartSuggest)} label="图表智能推荐" /></div>
+              <div className="setting-line"><span><strong>业务化解释</strong><small>使用业务语言解释查询结果与变化原因</small></span><Switch checked={explainMode} onChange={() => setExplainMode(!explainMode)} label="业务化解释" /></div>
+              <button className="primary-action" onClick={() => notify("个人模型设置已保存")}>保存设置</button>
+            </section>
+          </div>
+        ) : (
+          <div className="personal-page">
+            <AdminPageHeader title="我的权限" description="查看当前岗位授权与可查询数据范围" action={<button className="primary-action" onClick={openRequest}>申请更多权限</button>} />
+            <div className="my-permission-summary">
+              <article><span>权限级别</span><strong>{user.permissionLevel}</strong></article>
+              <article><span>所属部门</span><strong>{user.department}</strong></article>
+              <article><span>数据范围</span><strong>{user.scope}</strong></article>
+            </div>
+            <section className="personal-card">
+              <h2>当前已授权能力</h2>
+              <div className="granted-grid">
+                {["经营指标查询", "结果导出", "风险指标查询", "图表分享"].map((item, index) => <div key={item}><span>✓</span><strong>{item}</strong><small>{index === 1 && user.key === "customer-manager" ? "需审批" : "已授权"}</small></div>)}
+              </div>
+            </section>
+            <section className="personal-card">
+              <h2>我的申请记录</h2>
+              {requests.length === 0 ? <p className="empty-state">暂无权限申请记录</p> : requests.map((request) => <div className="request-record" key={request.id}><div><strong>{request.permission}</strong><span>{request.scope} · {request.submittedAt}</span></div><Badge tone={request.status === "待审批" ? "amber" : request.status === "已通过" ? "green" : "red"}>{request.status}</Badge></div>)}
+            </section>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function PermissionRequestModal({
+  user,
+  close,
+  submit,
+}: {
+  user: DemoUser;
+  close: () => void;
+  submit: (permission: string, scope: string, reason: string) => void;
+}) {
+  const [permission, setPermission] = useState("跨机构经营指标查询");
+  const [scope, setScope] = useState("指定机构");
+  const [reason, setReason] = useState("");
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <div className="modal" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="申请更多权限">
+        <header><div><p>权限申请</p><h2>申请更多数据权限</h2></div><button onClick={close}>×</button></header>
+        <div className="applicant-note"><span className="avatar">{user.initials}</span><div><strong>{user.name}</strong><small>{user.department} · {user.role}</small></div></div>
+        <label>申请权限<select value={permission} onChange={(event) => setPermission(event.target.value)}><option>跨机构经营指标查询</option><option>风险明细查询</option><option>客户明细导出</option><option>SQL 查看</option><option>结果分享</option></select></label>
+        <label>申请数据范围<select value={scope} onChange={(event) => setScope(event.target.value)}><option>指定机构</option><option>本机构及下辖网点</option><option>苏南片区</option><option>全省机构</option></select></label>
+        <label>申请理由<textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请说明业务场景、使用期限和必要性" /></label>
+        <footer><button onClick={close}>取消</button><button className="primary" disabled={!reason.trim()} onClick={() => submit(permission, scope, reason.trim())}>提交申请</button></footer>
       </div>
-      <div className="toolbar"><label className="search-box">⌕<input placeholder="搜索用户、操作或资源" /></label><select><option>全部风险等级</option><option>高风险</option><option>中风险</option><option>低风险</option></select><select><option>今天</option><option>近7天</option><option>近30天</option></select></div>
-      <section className="panel table-panel">
-        <div className="table-wrap"><table><thead><tr><th>时间</th><th>操作人</th><th>操作类型</th><th>事件详情</th><th>数据范围</th><th>结果</th><th>风险</th></tr></thead><tbody>{logs.map((row) => <tr key={row[0]}>{row.map((value,index) => <td className={index === 3 ? "question-cell" : index === 0 ? "mono-cell" : ""} key={`${value}-${index}`}>{index === 5 ? <StatusBadge tone={value === "成功" ? "green" : value === "审批中" ? "amber" : "red"}>{value}</StatusBadge> : index === 6 ? <StatusBadge tone={value === "高" ? "red" : value === "中" ? "amber" : "gray"}>{value}</StatusBadge> : value}</td>)}</tr>)}</tbody></table></div>
-      </section>
     </div>
   );
 }
