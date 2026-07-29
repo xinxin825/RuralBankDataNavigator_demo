@@ -246,6 +246,10 @@ export default function Home() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [requests, setRequests] = useState(initialRequests);
+  const [favorites, setFavorites] = useState<string[]>([
+    "今年各机构普惠小微贷款增速如何？",
+  ]);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [toast, setToast] = useState("");
 
   const user = USERS[activeUserKey];
@@ -297,6 +301,19 @@ export default function Home() {
     setSurface("workspace");
   }
 
+  function toggleFavorite(question: string) {
+    setFavorites((current) =>
+      current.includes(question)
+        ? current.filter((item) => item !== question)
+        : [question, ...current],
+    );
+    notify(
+      favorites.includes(question)
+        ? "已从收藏夹移除"
+        : "问数问题与当前结果已加入收藏夹",
+    );
+  }
+
   function updateRequest(id: string, status: RequestStatus) {
     setRequests((current) =>
       current.map((request) => (request.id === id ? { ...request, status } : request)),
@@ -339,6 +356,10 @@ export default function Home() {
           accountMenuOpen={accountMenuOpen}
           setAccountMenuOpen={setAccountMenuOpen}
           selectUser={selectUser}
+          favorites={favorites}
+          favoritesOpen={favoritesOpen}
+          setFavoritesOpen={setFavoritesOpen}
+          toggleFavorite={toggleFavorite}
         />
       )}
 
@@ -395,6 +416,10 @@ function Workspace({
   accountMenuOpen,
   setAccountMenuOpen,
   selectUser,
+  favorites,
+  favoritesOpen,
+  setFavoritesOpen,
+  toggleFavorite,
 }: {
   user: DemoUser;
   query: string;
@@ -410,6 +435,10 @@ function Workspace({
   accountMenuOpen: boolean;
   setAccountMenuOpen: (open: boolean) => void;
   selectUser: (key: UserKey) => void;
+  favorites: string[];
+  favoritesOpen: boolean;
+  setFavoritesOpen: (open: boolean) => void;
+  toggleFavorite: (question: string) => void;
 }) {
   return (
     <div className="workspace-shell">
@@ -441,8 +470,10 @@ function Workspace({
         </div>
 
         <div className="workspace-sidebar-footer">
-          <button onClick={() => notify("收藏夹已打开")}><span>☆</span>收藏</button>
-          <button onClick={() => notify("已展示全部历史记录")}><span>◷</span>历史记录</button>
+          <button onClick={() => setFavoritesOpen(!favoritesOpen)}>
+            <span>☆</span>收藏夹
+            {favorites.length > 0 && <em>{favorites.length}</em>}
+          </button>
           <button onClick={() => notify("帮助中心将在正式版接入")}><span>?</span>帮助</button>
           <button className="settings-entry" onClick={openSettings}><span>⚙</span>设置</button>
         </div>
@@ -494,6 +525,7 @@ function Workspace({
                 runQuery={runQuery}
                 isRunning={isRunning}
                 user={user}
+                notify={notify}
               />
             </div>
           </section>
@@ -508,9 +540,22 @@ function Workspace({
             tab={resultTab}
             setTab={setResultTab}
             notify={notify}
+            isFavorite={favorites.includes(submittedQuery)}
+            toggleFavorite={() => toggleFavorite(submittedQuery)}
           />
         )}
       </main>
+      {favoritesOpen && (
+        <FavoritesDrawer
+          favorites={favorites}
+          close={() => setFavoritesOpen(false)}
+          openQuestion={(question) => {
+            setFavoritesOpen(false);
+            runQuery(question);
+          }}
+          remove={toggleFavorite}
+        />
+      )}
       <span className="sr-only">管理控制台 指标治理 权限安全</span>
     </div>
   );
@@ -522,6 +567,7 @@ function QueryComposer({
   runQuery,
   isRunning,
   user,
+  notify,
   compact = false,
 }: {
   query: string;
@@ -529,6 +575,7 @@ function QueryComposer({
   runQuery: (value?: string) => void;
   isRunning: boolean;
   user: DemoUser;
+  notify: (message: string) => void;
   compact?: boolean;
 }) {
   const scopeOptions = user.canManage
@@ -547,7 +594,19 @@ function QueryComposer({
         aria-label="业务问题"
       />
       <div className="composer-footer">
-        <button className="attachment-button" aria-label="添加附件">⌕</button>
+        <label className="attachment-button" aria-label="上传文件" title="上传文件">
+          ＋
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.png,.jpg,.jpeg"
+            onChange={(event) => {
+              const count = event.target.files?.length ?? 0;
+              if (count > 0) notify(`已添加 ${count} 个文件，问数时将一并解析`);
+              event.target.value = "";
+            }}
+          />
+        </label>
         <label className="scope-select">
           <span>▤</span>
           <select aria-label="查询数据范围">
@@ -577,6 +636,8 @@ function QueryResult({
   tab,
   setTab,
   notify,
+  isFavorite,
+  toggleFavorite,
 }: {
   user: DemoUser;
   question: string;
@@ -587,7 +648,10 @@ function QueryResult({
   tab: "chart" | "data" | "sql";
   setTab: (tab: "chart" | "data" | "sql") => void;
   notify: (message: string) => void;
+  isFavorite: boolean;
+  toggleFavorite: () => void;
 }) {
+  const [reportOpen, setReportOpen] = useState(false);
   const rows = [
     ["苏州农商行", "86.42", "28.67%", "18", 100],
     ["南京农商行", "72.18", "22.41%", "16", 84],
@@ -662,6 +726,8 @@ function QueryResult({
         <button onClick={() => notify("已加入经营分析看板")}>▤ 加入看板</button>
         <button onClick={() => notify("结果已导出，操作已写入审计日志")}>⇩ 导出</button>
         <button onClick={() => notify("分享链接已复制")}>⌯ 分享</button>
+        <button onClick={toggleFavorite}>{isFavorite ? "★ 已收藏" : "☆ 收藏问数"}</button>
+        <button className="report-action" onClick={() => setReportOpen(true)}>▧ 生成报告</button>
       </div>
 
       <QueryComposer
@@ -670,9 +736,88 @@ function QueryResult({
         runQuery={runQuery}
         isRunning={isRunning}
         user={user}
+        notify={notify}
         compact
       />
+      {reportOpen && (
+        <ReportModal
+          user={user}
+          question={question}
+          close={() => setReportOpen(false)}
+          notify={notify}
+        />
+      )}
     </section>
+  );
+}
+
+function FavoritesDrawer({
+  favorites,
+  close,
+  openQuestion,
+  remove,
+}: {
+  favorites: string[];
+  close: () => void;
+  openQuestion: (question: string) => void;
+  remove: (question: string) => void;
+}) {
+  return (
+    <aside className="favorites-drawer" aria-label="收藏夹">
+      <header>
+        <div><p>个人内容</p><h2>收藏夹</h2></div>
+        <button onClick={close} aria-label="关闭收藏夹">×</button>
+      </header>
+      {favorites.length === 0 ? (
+        <div className="favorites-empty"><span>☆</span><strong>暂无收藏内容</strong><p>完成问数后，可将问题和结果一起收藏。</p></div>
+      ) : (
+        <div className="favorite-list">
+          {favorites.map((question) => (
+            <article key={question}>
+              <button onClick={() => openQuestion(question)}>
+                <span>问数结果</span><strong>{question}</strong><small>包含图表、数据和 SQL</small>
+              </button>
+              <button className="remove-favorite" onClick={() => remove(question)} aria-label={`取消收藏 ${question}`}>×</button>
+            </article>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function ReportModal({
+  user,
+  question,
+  close,
+  notify,
+}: {
+  user: DemoUser;
+  question: string;
+  close: () => void;
+  notify: (message: string) => void;
+}) {
+  function downloadReport() {
+    const report = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>DataNavigator 问数分析报告</title><style>body{font-family:Arial,"Microsoft YaHei",sans-serif;max-width:860px;margin:48px auto;color:#17202b;line-height:1.8}h1{color:#087b5c}section{padding:20px 0;border-top:1px solid #ddd}</style><h1>问数分析报告</h1><p>生成用户：${user.name}（${user.department} · ${user.role}）</p><p>数据范围：${user.scope}</p><section><h2>分析问题</h2><p>${question}</p></section><section><h2>核心结论</h2><p>今年各机构普惠小微贷款整体保持较快增长，苏州、南京和无锡农商行增速位居前三。</p></section><section><h2>风险与建议</h2><p>建议结合机构贷款余额、同比增速与客户结构持续跟踪，并对低于全省平均水平的机构开展专项复盘。</p></section><section><h2>数据说明</h2><p>结果基于认证指标、已验证数据源及当前用户授权范围生成。</p></section></html>`;
+    const url = URL.createObjectURL(new Blob([report], { type: "text/html;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "DataNavigator-问数分析报告.html";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("报告已生成并下载");
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <div className="modal report-modal" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="生成问数报告">
+        <header><div><p>智能报告</p><h2>问数分析报告</h2></div><button onClick={close}>×</button></header>
+        <div className="report-meta"><span>生成用户：{user.name}</span><span>数据范围：{user.scope}</span></div>
+        <section><h3>分析问题</h3><p>{question}</p></section>
+        <section><h3>核心结论</h3><p>今年各机构普惠小微贷款整体保持较快增长，苏州、南京和无锡农商行增速位居前三。</p></section>
+        <section><h3>风险与建议</h3><p>建议持续跟踪机构贷款余额、同比增速与客户结构，对低于全省平均水平的机构开展专项复盘。</p></section>
+        <footer><button onClick={close}>关闭</button><button className="primary" onClick={downloadReport}>下载报告</button></footer>
+      </div>
+    </div>
   );
 }
 
@@ -729,16 +874,22 @@ function AdminPlatform({
         {view === "admin-connections" && <ConnectionsPage notify={notify} />}
         {view === "admin-metrics" && <MetricsPage notify={notify} />}
         {view === "admin-models" && <ModelsPage notify={notify} />}
+        {view === "admin-orgs" && <OrgRolesPage notify={notify} />}
         {view === "admin-permissions" && <PermissionsPage notify={notify} />}
         {view === "admin-approvals" && <ApprovalsPage requests={requests} updateRequest={updateRequest} />}
+        {view === "admin-sql" && <SqlExamplesPage notify={notify} />}
+        {view === "admin-audit" && <AuditPage notify={notify} />}
         {view === "admin-evaluation" && <EvaluationPage notify={notify} />}
         {![
           "admin-home",
           "admin-connections",
           "admin-metrics",
           "admin-models",
+          "admin-orgs",
           "admin-permissions",
           "admin-approvals",
+          "admin-sql",
+          "admin-audit",
           "admin-evaluation",
         ].includes(view) && (
           <GenericAdminPage
@@ -1016,7 +1167,7 @@ function ApprovalsPage({
                   <td>{request.permission}</td><td>{request.scope}</td><td>{request.reason}</td><td>{request.submittedAt}</td>
                   <td>
                     {request.status === "待审批" ? (
-                      <div className="approval-actions"><button onClick={() => updateRequest(request.id, "已拒绝")}>拒绝</button><button className="primary" onClick={() => updateRequest(request.id, "已通过")}>通过</button></div>
+                      <div className="approval-actions"><button onClick={() => updateRequest(request.id, "已拒绝")}>拒绝</button><button className="primary approve-button" onClick={() => updateRequest(request.id, "已通过")}>同意</button></div>
                     ) : <Badge tone={request.status === "已通过" ? "green" : "red"}>{request.status}</Badge>}
                   </td>
                 </tr>
@@ -1050,14 +1201,178 @@ function EvaluationPage({ notify }: { notify: (message: string) => void }) {
   );
 }
 
-const genericContent: Record<Exclude<AdminView, "admin-home" | "admin-connections" | "admin-metrics" | "admin-models" | "admin-permissions" | "admin-approvals" | "admin-evaluation">, [string, string, string[]]> = {
+function OrgRolesPage({ notify }: { notify: (message: string) => void }) {
+  const people = [
+    ["周主管", "数据资产部", "数据治理管理员", "全省机构", "正常", "今天 10:18"],
+    ["李经理", "南京农商行", "分支行负责人", "本机构及下辖网点", "正常", "今天 09:42"],
+    ["王专员", "风险管理部", "风险专员", "授权风险数据集", "正常", "今天 09:16"],
+    ["赵经理", "零售金融部", "客户经理", "本人及所属机构客户", "正常", "昨天 17:35"],
+    ["陈会计", "计划财务部", "财务分析岗", "全省财务指标", "正常", "昨天 16:08"],
+    ["孙主管", "苏州农商行", "分支行负责人", "本机构及下辖网点", "正常", "7月29日 14:26"],
+    ["钱专员", "合规管理部", "审计专员", "全省审计日志", "停用", "7月18日 11:40"],
+  ];
+  const [search, setSearch] = useState("");
+  const [department, setDepartment] = useState("全部部门");
+  const [role, setRole] = useState("全部岗位");
+  const filtered = useMemo(
+    () => people.filter((person) =>
+      (department === "全部部门" || person[1] === department) &&
+      (role === "全部岗位" || person[2] === role) &&
+      `${person[0]}${person[1]}${person[2]}`.includes(search.trim()),
+    ),
+    [department, role, search],
+  );
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="组织与角色" description="按部门、机构和岗位筛选人员，维护角色与数据范围" action={<button className="outline-action" onClick={() => notify("新增用户面板已打开")}>＋ 新增用户</button>} />
+      <div className="org-summary">
+        <article><span>在岗用户</span><strong>8,642</strong><small>今日活跃 2,318</small></article>
+        <article><span>部门与机构</span><strong>486</strong><small>覆盖全省农商行</small></article>
+        <article><span>岗位角色</span><strong>32</strong><small>6 个角色待复核</small></article>
+      </div>
+      <div className="admin-toolbar org-filters">
+        <label>⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索用户名、部门或岗位" /></label>
+        <select value={department} onChange={(event) => setDepartment(event.target.value)}><option>全部部门</option><option>数据资产部</option><option>南京农商行</option><option>苏州农商行</option><option>风险管理部</option><option>零售金融部</option><option>计划财务部</option><option>合规管理部</option></select>
+        <select value={role} onChange={(event) => setRole(event.target.value)}><option>全部岗位</option><option>数据治理管理员</option><option>分支行负责人</option><option>风险专员</option><option>客户经理</option><option>财务分析岗</option><option>审计专员</option></select>
+        <select><option>全部状态</option><option>正常</option><option>停用</option></select>
+      </div>
+      <section className="admin-panel user-directory">
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>用户</th><th>所属部门 / 机构</th><th>岗位角色</th><th>可查询数据范围</th><th>账号状态</th><th>最近活跃</th><th>操作</th></tr></thead>
+            <tbody>
+              {filtered.map((person) => (
+                <tr key={person[0]}>
+                  <td><div className="directory-user"><span>{person[0].slice(0, 1)}</span><strong>{person[0]}</strong></div></td>
+                  <td>{person[1]}</td><td>{person[2]}</td><td>{person[3]}</td>
+                  <td><Badge tone={person[4] === "正常" ? "green" : "gray"}>{person[4]}</Badge></td>
+                  <td>{person[5]}</td><td><button className="text-action" onClick={() => notify(`${person[0]}的角色配置已打开`)}>配置</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <footer>共 {filtered.length} 名用户 · 用户岗位变更将自动触发权限重算</footer>
+      </section>
+    </div>
+  );
+}
+
+function SqlExamplesPage({ notify }: { notify: (message: string) => void }) {
+  const examples = [
+    {
+      id: "SQL-02460",
+      question: "今年各机构普惠小微贷款余额、同比增速和排名是多少？",
+      domain: "经营分析",
+      metrics: "普惠小微贷款余额",
+      sql: "SELECT institution_name, SUM(loan_balance) AS balance, yoy_rate,\n       DENSE_RANK() OVER (ORDER BY SUM(loan_balance) DESC) AS rank_no\nFROM certified_sme_loan_metrics\nWHERE report_date = :report_date\n  AND institution_id IN (:authorized_scope)\nGROUP BY institution_name, yoy_rate;",
+      status: "生产可用",
+    },
+    {
+      id: "SQL-02459",
+      question: "近30天新增逾期贷款主要集中在哪些机构和产品？",
+      domain: "风险管理",
+      metrics: "新增逾期贷款",
+      sql: "SELECT institution_name, product_name, SUM(overdue_balance) AS amount\nFROM risk_overdue_detail\nWHERE first_overdue_date >= CURRENT_DATE - INTERVAL '30 DAY'\nGROUP BY institution_name, product_name\nORDER BY amount DESC;",
+      status: "生产可用",
+    },
+    {
+      id: "SQL-02458",
+      question: "筛选近半年存款下降但资产规模较高的客户群体",
+      domain: "客户营销",
+      metrics: "客户AUM、存款日均余额",
+      sql: "SELECT customer_segment, COUNT(*) AS customer_count\nFROM customer_value_profile\nWHERE deposit_change_rate_6m < -0.15\n  AND aum_balance >= 500000\nGROUP BY customer_segment;",
+      status: "审核中",
+    },
+    {
+      id: "SQL-02457",
+      question: "各分支行不良贷款率及较年初变化是多少？",
+      domain: "风险管理",
+      metrics: "不良贷款率",
+      sql: "SELECT branch_name, npl_ratio, npl_ratio - year_begin_ratio AS change_rate\nFROM certified_branch_risk_metrics\nWHERE report_month = :report_month\nORDER BY npl_ratio DESC;",
+      status: "生产可用",
+    },
+  ];
+  const [selected, setSelected] = useState(examples[0]);
+  const [search, setSearch] = useState("");
+  const visible = examples.filter((item) => `${item.question}${item.domain}${item.metrics}`.includes(search.trim()));
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="SQL 示例" description="沉淀标准问法、认证指标和高质量 SQL，增强生成准确率" action={<button className="outline-action" onClick={() => notify("SQL 示例编辑器已打开")}>＋ 新增示例</button>} />
+      <div className="sql-stats"><Badge>标准示例 2,460 条</Badge><Badge tone="blue">本月新增 86 条</Badge><Badge tone="amber">待审核 12 条</Badge></div>
+      <div className="admin-toolbar"><label>⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索问法、指标或业务域" /></label><select><option>全部业务域</option><option>经营分析</option><option>风险管理</option><option>客户营销</option></select><select><option>全部状态</option><option>生产可用</option><option>审核中</option></select></div>
+      <div className="sql-examples-layout">
+        <section className="admin-panel sql-example-list">
+          {visible.map((item) => (
+            <button key={item.id} className={selected.id === item.id ? "active" : ""} onClick={() => setSelected(item)}>
+              <span>{item.id}</span><strong>{item.question}</strong><small>{item.domain} · {item.metrics}</small>
+              <Badge tone={item.status === "生产可用" ? "green" : "amber"}>{item.status}</Badge>
+            </button>
+          ))}
+        </section>
+        <aside className="admin-panel sql-example-detail">
+          <header><div><p>{selected.id}</p><h2>{selected.question}</h2></div><button onClick={() => notify("SQL 示例编辑器已打开")}>编辑</button></header>
+          <div className="sql-meta"><span>业务域：{selected.domain}</span><span>关联指标：{selected.metrics}</span><span>权限注入：已启用</span></div>
+          <pre>{selected.sql}</pre>
+          <section><h3>生成约束</h3><p>仅使用认证表关系；机构范围由权限引擎注入；默认最大返回 1,000 行；敏感字段按岗位脱敏。</p></section>
+          <footer><button onClick={() => notify("SQL 运行测试通过")}>▷ 运行测试</button><button className="primary" onClick={() => notify("SQL 示例已发布到生产环境")}>发布示例</button></footer>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function AuditPage({ notify }: { notify: (message: string) => void }) {
+  const events = [
+    ["2026-07-30 10:18:42", "赵经理", "权限拦截", "尝试查询非本人管户客户身份证号", "零售金融部", "已拦截", "高"],
+    ["2026-07-30 10:03:16", "李经理", "异常警告", "10分钟内连续发起 38 次跨机构明细查询", "南京农商行", "待核查", "高"],
+    ["2026-07-30 09:56:08", "王专员", "查询操作", "查询苏南片区新增逾期贷款分布", "授权风险数据集", "成功", "低"],
+    ["2026-07-30 09:41:27", "赵经理", "权限拦截", "申请导出 5.2 万条客户明细，超出单次上限", "本人管户客户", "已拦截", "高"],
+    ["2026-07-30 08:22:51", "系统任务", "异常警告", "监管报送库元数据同步延迟 47 分钟", "监管报送库", "处理中", "中"],
+    ["2026-07-30 02:14:33", "未知终端", "异常警告", "非工作时段使用已失效会话访问风险明细", "无权限", "已阻断", "高"],
+    ["2026-07-29 17:48:02", "周主管", "权限变更", "批准 PA-2026-016 跨机构风险指标查询", "苏南片区", "成功", "低"],
+    ["2026-07-29 16:36:45", "陈会计", "导出操作", "导出二季度净利息收入分析报告", "全省财务指标", "成功", "中"],
+  ];
+  const [filter, setFilter] = useState("全部事件");
+  const visible = events.filter((event) => filter === "全部事件" || event[2] === filter);
+  return (
+    <div className="admin-page">
+      <AdminPageHeader title="审计日志" description="查看历史权限拦截、异常警告、查询导出和权限变更记录" action={<button className="outline-action" onClick={() => notify("审计报告已生成")}>⇩ 导出审计报告</button>} />
+      <div className="audit-stats">
+        <button className={filter === "全部事件" ? "active" : ""} onClick={() => setFilter("全部事件")}><span>今日事件</span><strong>12,846</strong><small>全部审计记录</small></button>
+        <button className={filter === "权限拦截" ? "active" : ""} onClick={() => setFilter("权限拦截")}><span>历史权限拦截</span><strong>36</strong><small>均已阻断</small></button>
+        <button className={filter === "异常警告" ? "active warning" : "warning"} onClick={() => setFilter("异常警告")}><span>异常警告</span><strong>3</strong><small>2 项待核查</small></button>
+        <article><span>敏感导出</span><strong>14</strong><small>5 项审批中</small></article>
+      </div>
+      <div className="admin-toolbar"><label>⌕<input placeholder="搜索用户、事件或数据范围" /></label><select><option>全部风险等级</option><option>高风险</option><option>中风险</option><option>低风险</option></select><select><option>近 24 小时</option><option>近 7 天</option><option>近 30 天</option></select></div>
+      <section className="admin-panel audit-table">
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>用户</th><th>事件类型</th><th>历史内容</th><th>数据范围</th><th>处理结果</th><th>风险等级</th><th>详情</th></tr></thead>
+            <tbody>
+              {visible.map((event) => (
+                <tr key={`${event[0]}-${event[1]}`}>
+                  <td>{event[0]}</td><td><strong>{event[1]}</strong></td>
+                  <td><Badge tone={event[2] === "权限拦截" ? "red" : event[2] === "异常警告" ? "amber" : "blue"}>{event[2]}</Badge></td>
+                  <td className="audit-detail">{event[3]}</td><td>{event[4]}</td>
+                  <td><Badge tone={event[5] === "已拦截" || event[5] === "已阻断" ? "red" : event[5] === "待核查" || event[5] === "处理中" ? "amber" : "green"}>{event[5]}</Badge></td>
+                  <td><Badge tone={event[6] === "高" ? "red" : event[6] === "中" ? "amber" : "gray"}>{event[6]}</Badge></td>
+                  <td><button className="text-action" onClick={() => notify("审计事件详情已打开")}>查看</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const genericContent: Record<Exclude<AdminView, "admin-home" | "admin-connections" | "admin-metrics" | "admin-models" | "admin-orgs" | "admin-permissions" | "admin-approvals" | "admin-sql" | "admin-audit" | "admin-evaluation">, [string, string, string[]]> = {
   "admin-semantic": ["语义模型", "维护数据表关系、业务实体和字段语义映射", ["已认证主题模型 18 个", "自动关系识别 92.6%", "待审核字段说明 26 项"]],
   "admin-terms": ["业务术语", "统一行内简称、同义词与业务表达", ["标准术语 1,842 个", "同义表达 5,628 个", "待治理表达 26 个"]],
-  "admin-sql": ["SQL 示例", "沉淀高质量问法与标准 SQL 对，增强生成准确率", ["标准示例 2,460 条", "本月新增 86 条", "采用率 78.4%"]],
   "admin-prompts": ["提示词编排", "分场景配置意图识别、SQL 生成和结果解读模板", ["生产模板 24 个", "灰度模板 6 个", "平均版本 3.8"]],
-  "admin-orgs": ["组织与角色", "管理部门、机构层级、岗位角色与人员映射", ["机构节点 486 个", "岗位角色 32 个", "在岗人员 8,642 人"]],
   "admin-masking": ["脱敏策略", "按岗位与使用场景配置敏感字段展示规则", ["敏感字段 28 个", "生效策略 42 条", "覆盖率 100%"]],
-  "admin-audit": ["审计日志", "记录查询、导出、授权与异常访问行为", ["今日查询 12,846 次", "权限拦截 36 次", "异常告警 3 项"]],
   "admin-feedback": ["用户反馈", "汇总业务人员评价与改进建议", ["本月反馈 160 条", "有帮助 132 条", "待改进 28 条"]],
 };
 
