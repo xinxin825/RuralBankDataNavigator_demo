@@ -13,8 +13,7 @@ const nextConfig: NextConfig = isGitHubPages
         unoptimized: true,
       },
       typescript: {
-        // The Cloudflare worker has runtime-only types that are unrelated to
-        // the browser-only GitHub Pages export.
+        // Cloudflare runtime types are unrelated to the browser-only Pages build.
         ignoreBuildErrors: true,
       },
     }
